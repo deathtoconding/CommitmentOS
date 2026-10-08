@@ -1,20 +1,19 @@
 import { randomUUID } from 'node:crypto';
 import { asc, desc, eq } from 'drizzle-orm';
-import { getAuthenticatedSession } from '@/auth/session';
 import { database } from '@/db/client';
 import { workspace, workspaceMember } from '@/db/schema';
+import { requireSession } from '@/workspaces/authorization';
 import { createWorkspaceSchema } from '@/workspaces/schemas';
 import {
   internalErrorResponse,
   invalidRequestResponse,
-  unauthenticatedResponse,
   workspaceResponse,
 } from '@/workspaces/responses';
 
 export async function GET(request: Request): Promise<Response> {
-  const currentSession = await getAuthenticatedSession(request.headers);
-  if (!currentSession) {
-    return unauthenticatedResponse();
+  const sessionResult = await requireSession(request.headers);
+  if (!sessionResult.authorized) {
+    return sessionResult.response;
   }
 
   try {
@@ -27,7 +26,7 @@ export async function GET(request: Request): Promise<Response> {
       })
       .from(workspaceMember)
       .innerJoin(workspace, eq(workspaceMember.workspaceId, workspace.id))
-      .where(eq(workspaceMember.userId, currentSession.user.id))
+      .where(eq(workspaceMember.userId, sessionResult.value.user.id))
       .orderBy(desc(workspace.createdAt), asc(workspace.id));
 
     return workspaceResponse({ workspaces });
@@ -37,9 +36,9 @@ export async function GET(request: Request): Promise<Response> {
 }
 
 export async function POST(request: Request): Promise<Response> {
-  const currentSession = await getAuthenticatedSession(request.headers);
-  if (!currentSession) {
-    return unauthenticatedResponse();
+  const sessionResult = await requireSession(request.headers);
+  if (!sessionResult.authorized) {
+    return sessionResult.response;
   }
 
   let payload: unknown;
@@ -72,7 +71,7 @@ export async function POST(request: Request): Promise<Response> {
       await transaction.insert(workspaceMember).values({
         id: randomUUID(),
         workspaceId: newWorkspace.id,
-        userId: currentSession.user.id,
+        userId: sessionResult.value.user.id,
         role: 'OWNER',
       });
 

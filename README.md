@@ -2,7 +2,7 @@
 
 CommitmentOS turns business conversations into tracked commitments so teams can follow through on what they promised.
 
-This repository is being built in dependency-ordered increments. The current implementation establishes the application runtime, quality gates, PostgreSQL foundation, and email/password authentication. Workspace authorization, commitments, and communication integrations remain later stages.
+This repository is being built in dependency-ordered increments. The current implementation establishes the application runtime, quality gates, PostgreSQL foundation, email/password authentication, workspace membership, and reusable workspace authorization guards. Commitment workflows and communication integrations remain later stages.
 
 ## Stack
 
@@ -45,7 +45,7 @@ npm run test:integration
 npm audit --audit-level=moderate
 ```
 
-`npm run test:integration` requires the database migrations to have been applied and a production build to exist. It starts a local Next.js server and exercises the real authentication routes and protected page.
+`npm run test:integration` requires the database migrations to have been applied and a production build to exist. It starts a local Next.js server and exercises authentication, workspace creation, membership constraints, role checks, and tenant isolation against PostgreSQL.
 
 ## Database migrations
 
@@ -60,10 +60,10 @@ The `commitmentos` PostgreSQL schema is reserved for application tables. Do not 
 
 ## Authentication scope
 
-COM-104 uses Better Auth's email/password and database-session support. Passwords use Better Auth's built-in scrypt hashing; session cookies are HttpOnly and SameSite by default and Secure in production. Sign-up does not automatically establish a session, and duplicate-account registration receives a generic response to reduce account enumeration. Email verification, account recovery, OAuth providers, workspace membership, and authorization/RBAC are not part of this increment.
+COM-104 uses Better Auth's email/password and database-session support. Passwords use Better Auth's built-in scrypt hashing; session cookies are HttpOnly and SameSite by default and Secure in production. Sign-up does not automatically establish a session, and duplicate-account registration receives a generic response to reduce account enumeration. Email verification, account recovery, and OAuth providers remain tracked follow-up work. COM-105 adds workspace membership; COM-106 provides reusable session, membership, and role guards. Member administration and broader policy remain later work.
 
-See [ADR-0002](docs/adr/0002-authentication.md) for the authentication decision and limitations.
+See [ADR-0002](docs/adr/0002-authentication.md) for the authentication decision and [workspace behavior](docs/workspaces.md) for tenant scoping.
 
 ## CI
 
-GitHub Actions runs formatting, lint, TypeScript checks, dependency audit, unit tests, PostgreSQL migrations/smoke checks, a production build, and end-to-end authentication checks against an ephemeral PostgreSQL service.
+GitHub Actions runs formatting, lint, TypeScript checks, dependency audit, unit tests, PostgreSQL migrations/smoke checks, a production build, and end-to-end authentication and workspace authorization checks against an ephemeral PostgreSQL service.

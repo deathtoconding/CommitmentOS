@@ -11,7 +11,7 @@ Browser
 Next.js application
   │
   ├── Auth UI and Better Auth route handler
-  ├── workspace APIs with membership-scoped queries
+  ├── workspace APIs using reusable session/membership/role guards
   └── Drizzle database adapter
 
 PostgreSQL
@@ -21,7 +21,7 @@ PostgreSQL
 ## Boundaries
 
 - Presentation code must not own business rules.
-- Future API handlers must authenticate and authorize before accessing workspace resources.
+- Workspace APIs use the reusable session, membership, and role guards; future tenant-owned APIs must authorize before accessing workspace resources.
 - Provider-specific Gmail, Slack, and Calendar code will normalize into provider-neutral domain inputs.
 - AI responses will be treated as untrusted and validated before domain use.
 - Database access will be isolated behind the database/domain application boundary.

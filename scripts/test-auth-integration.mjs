@@ -277,6 +277,15 @@ try {
     (error) => error.code === '23503',
     'Membership rows must reference an existing user.',
   );
+  await assert.rejects(
+    pool.query(
+      `INSERT INTO commitmentos.workspace_member (id, workspace_id, user_id, role)
+       VALUES ($1, $2, $3, $4)`,
+      [randomUUID(), firstWorkspace.id, registrationResult.user.id, 'ADMIN'],
+    ),
+    (error) => error.code === '22P02',
+    'The database must reject roles outside OWNER and MEMBER.',
+  );
 
   const anonymousWorkspaceDetails = await workspaceRequest(`/api/workspaces/${firstWorkspace.id}`);
   assert.equal(anonymousWorkspaceDetails.status, 401);
@@ -294,7 +303,15 @@ try {
     cookie,
   });
   assert.equal(firstWorkspaceDetails.status, 200);
-  assert.equal((await firstWorkspaceDetails.json()).workspace.id, firstWorkspace.id);
+  const firstWorkspaceDetailsResult = await firstWorkspaceDetails.json();
+  assert.equal(firstWorkspaceDetailsResult.workspace.id, firstWorkspace.id);
+  assert.equal(firstWorkspaceDetailsResult.workspace.role, 'OWNER');
+
+  const invalidWorkspaceDetails = await workspaceRequest(
+    '/api/workspaces/not-a-valid-workspace-id',
+    { cookie },
+  );
+  assert.equal(invalidWorkspaceDetails.status, 404, 'Unknown workspace IDs must remain hidden.');
 
   const secondWorkspaceResponse = await workspaceRequest('/api/workspaces', {
     method: 'POST',
@@ -322,6 +339,17 @@ try {
   assert.equal(emptySecondUserList.status, 200);
   assert.deepEqual((await emptySecondUserList.json()).workspaces, []);
 
+  await pool.query(
+    `INSERT INTO commitmentos.workspace_member (id, workspace_id, user_id, role)
+     VALUES ($1, $2, $3, $4)`,
+    [randomUUID(), firstWorkspace.id, secondRegistrationResult.user.id, 'MEMBER'],
+  );
+  const memberWorkspaceDetails = await workspaceRequest(`/api/workspaces/${firstWorkspace.id}`, {
+    cookie: secondCookie,
+  });
+  assert.equal(memberWorkspaceDetails.status, 200, 'Workspace members should have access.');
+  assert.equal((await memberWorkspaceDetails.json()).workspace.role, 'MEMBER');
+
   const thirdWorkspaceResponse = await workspaceRequest('/api/workspaces', {
     method: 'POST',
     cookie: secondCookie,
@@ -343,14 +371,17 @@ try {
   const secondUserWorkspaceIds = (await finalSecondUserList.json()).workspaces.map(
     (item) => item.id,
   );
-  assert.deepEqual(secondUserWorkspaceIds, [thirdWorkspace.id]);
+  assert.deepEqual(
+    new Set(secondUserWorkspaceIds),
+    new Set([firstWorkspace.id, thirdWorkspace.id]),
+  );
 
-  const secondUserCannotReadFirstWorkspace = await workspaceRequest(
-    `/api/workspaces/${firstWorkspace.id}`,
+  const secondUserCannotReadSecondWorkspace = await workspaceRequest(
+    `/api/workspaces/${secondWorkspace.id}`,
     { cookie: secondCookie },
   );
   assert.equal(
-    secondUserCannotReadFirstWorkspace.status,
+    secondUserCannotReadSecondWorkspace.status,
     404,
     'Non-members must not be able to access another workspace.',
   );

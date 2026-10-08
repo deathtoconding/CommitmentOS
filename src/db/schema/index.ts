@@ -91,3 +91,5 @@ export const workspaceMember = commitmentosSchema.table(
     index('workspace_member_user_id_idx').on(table.userId),
   ],
 );
+
+export type WorkspaceRole = (typeof workspaceRole.enumValues)[number];

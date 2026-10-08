@@ -17,6 +17,10 @@ export function notFoundResponse(): Response {
   return workspaceResponse({ error: 'NOT_FOUND' }, 404);
 }
 
+export function forbiddenResponse(): Response {
+  return workspaceResponse({ error: 'FORBIDDEN' }, 403);
+}
+
 export function internalErrorResponse(): Response {
   return workspaceResponse({ error: 'INTERNAL_SERVER_ERROR' }, 500);
 }
