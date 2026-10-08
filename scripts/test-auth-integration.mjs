@@ -484,8 +484,10 @@ try {
     const safeServerOutput = [authSecret, smtpPassword]
       .filter(Boolean)
       .reduce((output, secret) => output.replaceAll(secret, '[redacted]'), serverOutput);
+    const responseMessage =
+      typeof responseBody.message === 'string' ? `: ${responseBody.message}` : '';
     throw new Error(
-      `A new account should register successfully (HTTP ${registration.status}, ${responseBody.code ?? 'unknown'}). ${safeServerOutput}`,
+      `A new account should register successfully (HTTP ${registration.status}, ${responseBody.code ?? 'unknown'}${responseMessage}). ${safeServerOutput}`,
     );
   }
   const registrationResult = await registration.json();
