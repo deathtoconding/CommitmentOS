@@ -31,6 +31,7 @@ export const auth = betterAuth({
   },
   advanced: {
     cookiePrefix: 'commitmentos',
+    useSecureCookies: process.env.NODE_ENV === 'production',
   },
   rateLimit: {
     enabled: process.env.NODE_ENV === 'production',

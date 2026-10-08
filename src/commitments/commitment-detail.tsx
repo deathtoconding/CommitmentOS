@@ -14,6 +14,7 @@ type CommitmentAuditTimelineEvent = {
 type CommitmentDetailProps = {
   commitment: Commitment;
   workspaceId: string;
+  ownerName: string | null;
   auditEvents: readonly CommitmentAuditTimelineEvent[];
   nextAuditCursor: string | null;
 };
@@ -115,6 +116,7 @@ function CommitmentAuditTimeline({
 export function CommitmentDetail({
   commitment,
   workspaceId,
+  ownerName,
   auditEvents,
   nextAuditCursor,
 }: CommitmentDetailProps) {
@@ -146,7 +148,7 @@ export function CommitmentDetail({
         <dl className="commitment-detail-metadata">
           <div>
             <dt>Owner</dt>
-            <dd>{commitment.ownerUserId ? 'Assigned' : 'Unassigned'}</dd>
+            <dd>{commitment.ownerUserId ? (ownerName ?? 'Unknown') : 'Unassigned'}</dd>
           </div>
           <div>
             <dt>Deadline</dt>

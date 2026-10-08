@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { and, desc, eq, lt, or } from 'drizzle-orm';
 import { database } from '../db/client';
-import { commitment, commitmentAuditEvent, workspaceMember } from '../db/schema';
+import { commitment, commitmentAuditEvent, user, workspaceMember } from '../db/schema';
 import {
   commitmentCreatedAuditEvent,
   createCommitmentAuditEvents,
@@ -72,6 +72,22 @@ export async function getWorkspaceCommitment(
     .limit(1);
 
   return record ?? null;
+}
+
+export async function getWorkspaceCommitmentOwnerName(
+  workspaceId: string,
+  ownerUserId: string,
+): Promise<string | null> {
+  const [owner] = await database
+    .select({ name: user.name })
+    .from(workspaceMember)
+    .innerJoin(user, eq(workspaceMember.userId, user.id))
+    .where(
+      and(eq(workspaceMember.workspaceId, workspaceId), eq(workspaceMember.userId, ownerUserId)),
+    )
+    .limit(1);
+
+  return owner?.name ?? null;
 }
 
 export type CommitmentAuditEventCursor = {

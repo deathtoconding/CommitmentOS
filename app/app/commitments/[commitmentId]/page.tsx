@@ -4,7 +4,11 @@ import { notFound, redirect } from 'next/navigation';
 import { getAuthenticatedSession } from '@/auth/session';
 import { CommitmentDetail } from '@/commitments/commitment-detail';
 import { commitmentAuditEventCursorSchema } from '@/commitments/schemas';
-import { getWorkspaceCommitment, listWorkspaceCommitmentAuditEvents } from '@/commitments/service';
+import {
+  getWorkspaceCommitment,
+  getWorkspaceCommitmentOwnerName,
+  listWorkspaceCommitmentAuditEvents,
+} from '@/commitments/service';
 import { resolveActiveWorkspace } from '@/workspaces/active-workspace';
 import { listUserWorkspaces } from '@/workspaces/queries';
 import type { AppSearchParams } from '@/app-shell/section-page';
@@ -62,12 +66,12 @@ export default async function CommitmentDetailPage({
     notFound();
   }
 
-  const results = await listWorkspaceCommitmentAuditEvents(
-    resolution.workspace.id,
-    record.id,
-    AUDIT_PAGE_SIZE,
-    cursor,
-  );
+  const [ownerName, results] = await Promise.all([
+    record.ownerUserId
+      ? getWorkspaceCommitmentOwnerName(resolution.workspace.id, record.ownerUserId)
+      : Promise.resolve(null),
+    listWorkspaceCommitmentAuditEvents(resolution.workspace.id, record.id, AUDIT_PAGE_SIZE, cursor),
+  ]);
   const hasMore = results.length > AUDIT_PAGE_SIZE;
   const auditEvents = hasMore ? results.slice(0, AUDIT_PAGE_SIZE) : results;
   const lastEvent = auditEvents.at(-1);
@@ -83,6 +87,7 @@ export default async function CommitmentDetailPage({
       auditEvents={auditEvents}
       commitment={record}
       nextAuditCursor={nextAuditCursor}
+      ownerName={ownerName}
       workspaceId={resolution.workspace.id}
     />
   );

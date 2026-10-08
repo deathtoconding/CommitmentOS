@@ -401,8 +401,17 @@ try {
 
   const login = await authRequest('sign-in/email', { email, password });
   assert.ok(login.ok, 'Valid credentials should create a session.');
+  const setCookieHeaders = login.headers.getSetCookie();
+  const sessionSetCookie = setCookieHeaders.find((value) => value.includes('session_token'));
+  assert.ok(sessionSetCookie, 'Sign-in should set an HTTP session cookie.');
+  assert.match(sessionSetCookie, /;\s*httponly(?:;|$)/i);
+  assert.match(sessionSetCookie, /;\s*secure(?:;|$)/i);
+  assert.match(sessionSetCookie, /;\s*samesite=lax(?:;|$)/i);
   const cookie = readCookieHeader(login);
-  assert.ok(cookie.includes('session_token'), 'Sign-in should set an HTTP session cookie.');
+  assert.ok(
+    cookie.includes('session_token'),
+    'The session cookie must be available to the HTTP client.',
+  );
 
   const authenticatedPage = await fetch(`${baseURL}/app`, {
     headers: { cookie },
@@ -893,6 +902,14 @@ try {
     (await assignCommitmentOwner.json()).commitment.ownerUserId,
     secondRegistrationResult.user.id,
   );
+  const assignedOwnerDetail = await appPageRequest(
+    `/app/commitments/${apiCommitment.id}?workspaceId=${firstWorkspace.id}`,
+    cookie,
+  );
+  assert.equal(assignedOwnerDetail.status, 200);
+  const assignedOwnerDetailBody = await assignedOwnerDetail.text();
+  assert.match(assignedOwnerDetailBody, /Second Integration User/);
+  assert.ok(!assignedOwnerDetailBody.includes(secondEmail));
 
   const invalidCommitmentOwner = await workspaceRequest(
     `${firstCommitmentsPath}/${apiCommitment.id}`,
@@ -1364,6 +1381,14 @@ try {
     secondCookie,
   );
   await assertAppPageUnavailable(removedMemberCannotSelectWorkspace, ['Product Team']);
+  const removedOwnerDetail = await appPageRequest(
+    `/app/commitments/${apiCommitment.id}?workspaceId=${firstWorkspace.id}`,
+    cookie,
+  );
+  assert.equal(removedOwnerDetail.status, 200);
+  const removedOwnerDetailBody = await removedOwnerDetail.text();
+  assert.match(removedOwnerDetailBody, /Unknown/);
+  assert.ok(!removedOwnerDetailBody.includes('Second Integration User'));
 
   const readdedMemberResponse = await workspaceRequest(
     `/api/workspaces/${firstWorkspace.id}/members`,
@@ -1374,6 +1399,12 @@ try {
     },
   );
   assert.equal(readdedMemberResponse.status, 201);
+  const readdedOwnerDetail = await appPageRequest(
+    `/app/commitments/${apiCommitment.id}?workspaceId=${firstWorkspace.id}`,
+    cookie,
+  );
+  assert.equal(readdedOwnerDetail.status, 200);
+  assert.match(await readdedOwnerDetail.text(), /Second Integration User/);
 
   const promoteMemberResponse = await workspaceRequest(
     `/api/workspaces/${firstWorkspace.id}/members/${secondRegistrationResult.user.id}`,
