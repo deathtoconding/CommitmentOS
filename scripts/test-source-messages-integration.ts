@@ -4,13 +4,15 @@ import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import { createWorkspaceCommitment, updateWorkspaceCommitment } from '../src/commitments/service';
 import { databasePool } from '../src/db/client';
+import * as schema from '../src/db/schema';
 import {
-  recordSourceMessage,
+  createSourceMessageRecorder,
   SourceMessageProviderTimestampConflictError,
-} from '../src/source-messages/service';
+} from '../src/source-messages/service-core';
 
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) {
@@ -21,6 +23,7 @@ const pool = new Pool({
   connectionString: databaseUrl,
   application_name: 'commitmentos-source-message-integration-test',
 });
+const recordSourceMessage = createSourceMessageRecorder(drizzle(pool, { schema }));
 const workspaceId = randomUUID();
 const otherWorkspaceId = randomUUID();
 const userId = randomUUID();
