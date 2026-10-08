@@ -15,12 +15,13 @@ Next.js application
   └── Drizzle database adapter
 
 PostgreSQL
-  └── commitmentos schema (auth, workspace, and membership tables; product tables later)
+  └── commitmentos schema (auth, workspace, membership, and commitment tables; other product tables later)
 ```
 
 ## Boundaries
 
 - Presentation code must not own business rules.
+- Commitment domain types are independent of persistence; the Drizzle schema maps them to PostgreSQL enums and workspace-scoped tables.
 - Workspace APIs use the reusable session, membership, and role guards; owner-only membership mutations also recheck authorization within a transaction and serialize on the workspace row. Future tenant-owned APIs must authorize before accessing workspace resources.
 - Provider-specific Gmail, Slack, and Calendar code will normalize into provider-neutral domain inputs.
 - AI responses will be treated as untrusted and validated before domain use.

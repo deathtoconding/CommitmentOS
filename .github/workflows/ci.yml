@@ -71,5 +71,5 @@ jobs:
       - name: Build production application
         run: npm run build
 
-      - name: Authentication and workspace integration tests
+      - name: Authentication, workspace, and commitment integration tests
         run: npm run test:integration

@@ -105,6 +105,177 @@ function readCookieHeader(response) {
     .join('; ');
 }
 
+async function insertCommitment({
+  id = randomUUID(),
+  workspaceId,
+  ownerUserId = null,
+  sourceMessageId = null,
+  commitmentText = 'A test commitment',
+  normalizedAction = 'Complete the test action',
+  counterpartyName = null,
+  counterpartyEmail = null,
+  dueAt = null,
+  dueTimezone = null,
+  status = 'DETECTED',
+  confidenceScore = null,
+  sourceExcerpt = null,
+  completionEvidence = null,
+  completedAt = null,
+  createdBy,
+}) {
+  return pool.query(
+    `INSERT INTO commitmentos.commitment (
+       id, workspace_id, owner_user_id, source_message_id, commitment_text,
+       normalized_action, counterparty_name, counterparty_email, due_at,
+       due_timezone, status, confidence_score, source_excerpt,
+       completion_evidence, completed_at, created_by
+     ) VALUES (
+       $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
+     )`,
+    [
+      id,
+      workspaceId,
+      ownerUserId,
+      sourceMessageId,
+      commitmentText,
+      normalizedAction,
+      counterpartyName,
+      counterpartyEmail,
+      dueAt,
+      dueTimezone,
+      status,
+      confidenceScore,
+      sourceExcerpt,
+      completionEvidence,
+      completedAt,
+      createdBy,
+    ],
+  );
+}
+
+async function testCommitmentPersistence({ workspaceId, otherWorkspaceId, userId }) {
+  const populatedId = randomUUID();
+  const populatedDueAt = new Date('2026-11-02T09:30:00.000Z');
+  await insertCommitment({
+    id: populatedId,
+    workspaceId,
+    ownerUserId: userId,
+    sourceMessageId: 'provider-message-123',
+    commitmentText: 'I will send the revised proposal.',
+    normalizedAction: 'Send the revised proposal',
+    counterpartyName: 'Customer Example',
+    counterpartyEmail: 'customer@example.test',
+    dueAt: populatedDueAt,
+    dueTimezone: 'Europe/Amsterdam',
+    status: 'OPEN',
+    confidenceScore: 0.92,
+    sourceExcerpt: 'I will send the revised proposal by Monday.',
+    createdBy: userId,
+  });
+
+  const sparseId = randomUUID();
+  await insertCommitment({
+    id: sparseId,
+    workspaceId: otherWorkspaceId,
+    commitmentText: 'I will follow up.',
+    normalizedAction: 'Follow up',
+    createdBy: userId,
+  });
+
+  const populatedResult = await pool.query('SELECT * FROM commitmentos.commitment WHERE id = $1', [
+    populatedId,
+  ]);
+  assert.equal(populatedResult.rows.length, 1, 'A commitment should persist and be readable.');
+  const populated = populatedResult.rows[0];
+  assert.equal(populated.workspace_id, workspaceId);
+  assert.equal(populated.owner_user_id, userId);
+  assert.equal(populated.source_message_id, 'provider-message-123');
+  assert.equal(populated.commitment_text, 'I will send the revised proposal.');
+  assert.equal(populated.normalized_action, 'Send the revised proposal');
+  assert.equal(populated.counterparty_name, 'Customer Example');
+  assert.equal(populated.counterparty_email, 'customer@example.test');
+  assert.equal(populated.due_at.toISOString(), populatedDueAt.toISOString());
+  assert.equal(populated.due_timezone, 'Europe/Amsterdam');
+  assert.equal(populated.status, 'OPEN');
+  assert.equal(populated.confidence_score, 0.92);
+  assert.equal(populated.source_excerpt, 'I will send the revised proposal by Monday.');
+  assert.equal(populated.completion_evidence, null);
+  assert.equal(populated.completed_at, null);
+  assert.equal(populated.created_by, userId);
+  assert.ok(populated.created_at instanceof Date);
+  assert.ok(populated.updated_at instanceof Date);
+
+  const sparseResult = await pool.query('SELECT * FROM commitmentos.commitment WHERE id = $1', [
+    sparseId,
+  ]);
+  assert.equal(sparseResult.rows.length, 1);
+  const sparse = sparseResult.rows[0];
+  assert.equal(sparse.status, 'DETECTED', 'New records should default to DETECTED.');
+  for (const field of [
+    'owner_user_id',
+    'source_message_id',
+    'counterparty_name',
+    'counterparty_email',
+    'due_at',
+    'due_timezone',
+    'confidence_score',
+    'source_excerpt',
+    'completion_evidence',
+    'completed_at',
+  ]) {
+    assert.equal(sparse[field], null, `${field} should remain unknown rather than fabricated.`);
+  }
+
+  const workspaceScopedRows = await pool.query(
+    'SELECT id FROM commitmentos.commitment WHERE workspace_id = $1 ORDER BY id',
+    [workspaceId],
+  );
+  assert.deepEqual(
+    workspaceScopedRows.rows.map((row) => row.id),
+    [populatedId],
+    "Workspace-scoped persistence must not return another workspace's commitments.",
+  );
+  const otherWorkspaceRows = await pool.query(
+    'SELECT id FROM commitmentos.commitment WHERE workspace_id = $1 ORDER BY id',
+    [otherWorkspaceId],
+  );
+  assert.deepEqual(
+    otherWorkspaceRows.rows.map((row) => row.id),
+    [sparseId],
+  );
+
+  await assert.rejects(
+    insertCommitment({ workspaceId, createdBy: userId, status: 'UNKNOWN' }),
+    (error) => error.code === '22P02',
+    'The database must reject statuses outside the domain enum.',
+  );
+  await assert.rejects(
+    insertCommitment({ workspaceId, createdBy: userId, confidenceScore: 1.01 }),
+    (error) => error.code === '23514',
+    'Confidence scores must be within the inclusive zero-to-one range.',
+  );
+  await assert.rejects(
+    insertCommitment({ workspaceId, createdBy: userId, commitmentText: '   ' }),
+    (error) => error.code === '23514',
+    'Commitment text must not be blank.',
+  );
+  await assert.rejects(
+    insertCommitment({ workspaceId: randomUUID(), createdBy: userId }),
+    (error) => error.code === '23503',
+    'Commitments must reference an existing workspace.',
+  );
+  await assert.rejects(
+    insertCommitment({ workspaceId, ownerUserId: randomUUID(), createdBy: userId }),
+    (error) => error.code === '23503',
+    'A known owner must reference an existing user.',
+  );
+  await assert.rejects(
+    insertCommitment({ workspaceId, createdBy: randomUUID() }),
+    (error) => error.code === '23503',
+    'The creator must reference an existing user.',
+  );
+}
+
 async function cleanupServer() {
   if (!server || server.exitCode !== null) return;
 
@@ -334,6 +505,12 @@ try {
   const secondLogin = await authRequest('sign-in/email', { email: secondEmail, password });
   assert.ok(secondLogin.ok, 'The second user should be able to sign in.');
   const secondCookie = readCookieHeader(secondLogin);
+
+  await testCommitmentPersistence({
+    workspaceId: firstWorkspace.id,
+    otherWorkspaceId: secondWorkspace.id,
+    userId: registrationResult.user.id,
+  });
 
   const emptySecondUserList = await workspaceRequest('/api/workspaces', { cookie: secondCookie });
   assert.equal(emptySecondUserList.status, 200);
@@ -587,7 +764,7 @@ try {
   );
   assert.equal(remainingSessions.rows[0].count, 0, 'Logout must invalidate the database session.');
 
-  console.log('Authentication and workspace integration checks passed.');
+  console.log('Authentication, workspace, and commitment integration checks passed.');
 } finally {
   await cleanupServer();
   try {

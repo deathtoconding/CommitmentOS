@@ -1,4 +1,15 @@
-import { boolean, index, pgSchema, text, timestamp, unique } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
+import { COMMITMENT_STATUSES } from '../../commitments/model';
+import {
+  boolean,
+  check,
+  doublePrecision,
+  index,
+  pgSchema,
+  text,
+  timestamp,
+  unique,
+} from 'drizzle-orm/pg-core';
 
 /** Database namespace reserved for CommitmentOS application tables. */
 export const commitmentosSchema = pgSchema('commitmentos');
@@ -93,3 +104,48 @@ export const workspaceMember = commitmentosSchema.table(
 );
 
 export type WorkspaceRole = (typeof workspaceRole.enumValues)[number];
+
+export const commitmentStatus = commitmentosSchema.enum('commitment_status', COMMITMENT_STATUSES);
+
+export const commitment = commitmentosSchema.table(
+  'commitment',
+  {
+    id: text('id').primaryKey(),
+    workspaceId: text('workspace_id')
+      .notNull()
+      .references(() => workspace.id, { onDelete: 'cascade' }),
+    ownerUserId: text('owner_user_id').references(() => user.id, { onDelete: 'set null' }),
+    // Message ingestion is modeled in a later increment; keep its external/source ID opaque here.
+    sourceMessageId: text('source_message_id'),
+    commitmentText: text('commitment_text').notNull(),
+    normalizedAction: text('normalized_action').notNull(),
+    counterpartyName: text('counterparty_name'),
+    counterpartyEmail: text('counterparty_email'),
+    dueAt: timestamp('due_at', { withTimezone: true, mode: 'date' }),
+    dueTimezone: text('due_timezone'),
+    status: commitmentStatus('status').default('DETECTED').notNull(),
+    confidenceScore: doublePrecision('confidence_score'),
+    sourceExcerpt: text('source_excerpt'),
+    completionEvidence: text('completion_evidence'),
+    completedAt: timestamp('completed_at', { withTimezone: true, mode: 'date' }),
+    createdBy: text('created_by')
+      .notNull()
+      .references(() => user.id, { onDelete: 'restrict' }),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => [
+    check('commitment_text_nonempty', sql`length(btrim("commitment_text")) > 0`),
+    check('commitment_action_nonempty', sql`length(btrim("normalized_action")) > 0`),
+    check('commitment_confidence_score_range', sql`"confidence_score" BETWEEN 0 AND 1`),
+    index('commitment_workspace_status_due_at_idx').on(
+      table.workspaceId,
+      table.status,
+      table.dueAt,
+    ),
+    index('commitment_workspace_owner_user_id_idx').on(table.workspaceId, table.ownerUserId),
+    index('commitment_workspace_source_message_idx').on(table.workspaceId, table.sourceMessageId),
+  ],
+);
+
+export type { CommitmentStatus } from '../../commitments/model';
