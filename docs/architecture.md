@@ -21,7 +21,7 @@ PostgreSQL
 ## Boundaries
 
 - Presentation code must not own business rules.
-- Workspace APIs use the reusable session, membership, and role guards; future tenant-owned APIs must authorize before accessing workspace resources.
+- Workspace APIs use the reusable session, membership, and role guards; owner-only membership mutations also recheck authorization within a transaction and serialize on the workspace row. Future tenant-owned APIs must authorize before accessing workspace resources.
 - Provider-specific Gmail, Slack, and Calendar code will normalize into provider-neutral domain inputs.
 - AI responses will be treated as untrusted and validated before domain use.
 - Database access will be isolated behind the database/domain application boundary.

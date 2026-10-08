@@ -339,16 +339,164 @@ try {
   assert.equal(emptySecondUserList.status, 200);
   assert.deepEqual((await emptySecondUserList.json()).workspaces, []);
 
-  await pool.query(
-    `INSERT INTO commitmentos.workspace_member (id, workspace_id, user_id, role)
-     VALUES ($1, $2, $3, $4)`,
-    [randomUUID(), firstWorkspace.id, secondRegistrationResult.user.id, 'MEMBER'],
+  const addMemberResponse = await workspaceRequest(`/api/workspaces/${firstWorkspace.id}/members`, {
+    method: 'POST',
+    cookie,
+    body: { email: secondEmail },
+  });
+  assert.equal(addMemberResponse.status, 201, 'Owners should be able to add registered users.');
+  const addedMember = (await addMemberResponse.json()).member;
+  assert.equal(addedMember.userId, secondRegistrationResult.user.id);
+  assert.equal(addedMember.role, 'MEMBER');
+
+  const duplicateMemberResponse = await workspaceRequest(
+    `/api/workspaces/${firstWorkspace.id}/members`,
+    { method: 'POST', cookie, body: { email: secondEmail } },
   );
+  assert.equal(duplicateMemberResponse.status, 409, 'Adding an existing member must be rejected.');
+
+  const unregisteredMemberResponse = await workspaceRequest(
+    `/api/workspaces/${firstWorkspace.id}/members`,
+    { method: 'POST', cookie, body: { email: 'not-registered@example.test' } },
+  );
+  assert.equal(unregisteredMemberResponse.status, 404, 'Only registered accounts can be added.');
+
   const memberWorkspaceDetails = await workspaceRequest(`/api/workspaces/${firstWorkspace.id}`, {
     cookie: secondCookie,
   });
   assert.equal(memberWorkspaceDetails.status, 200, 'Workspace members should have access.');
   assert.equal((await memberWorkspaceDetails.json()).workspace.role, 'MEMBER');
+
+  const ownerMemberListResponse = await workspaceRequest(
+    `/api/workspaces/${firstWorkspace.id}/members`,
+    { cookie },
+  );
+  assert.equal(ownerMemberListResponse.status, 200);
+  const ownerMemberList = (await ownerMemberListResponse.json()).members;
+  assert.equal(ownerMemberList.length, 2);
+  assert.equal(
+    ownerMemberList.find((member) => member.userId === registrationResult.user.id)?.role,
+    'OWNER',
+  );
+  assert.equal(
+    ownerMemberList.find((member) => member.userId === secondRegistrationResult.user.id)?.role,
+    'MEMBER',
+  );
+
+  const memberMemberListResponse = await workspaceRequest(
+    `/api/workspaces/${firstWorkspace.id}/members`,
+    { cookie: secondCookie },
+  );
+  assert.equal(memberMemberListResponse.status, 200, 'Members may list their workspace members.');
+  assert.equal((await memberMemberListResponse.json()).members.length, 2);
+
+  const memberCannotAdd = await workspaceRequest(`/api/workspaces/${firstWorkspace.id}/members`, {
+    method: 'POST',
+    cookie: secondCookie,
+    body: { email },
+  });
+  assert.equal(memberCannotAdd.status, 403, 'Only owners may add members.');
+
+  const memberCannotChangeRole = await workspaceRequest(
+    `/api/workspaces/${firstWorkspace.id}/members/${registrationResult.user.id}`,
+    { method: 'PATCH', cookie: secondCookie, body: { role: 'MEMBER' } },
+  );
+  assert.equal(memberCannotChangeRole.status, 403, 'Only owners may change member roles.');
+
+  const memberCannotRemove = await workspaceRequest(
+    `/api/workspaces/${firstWorkspace.id}/members/${registrationResult.user.id}`,
+    { method: 'DELETE', cookie: secondCookie },
+  );
+  assert.equal(memberCannotRemove.status, 403, 'Only owners may remove members.');
+
+  const invalidRoleChange = await workspaceRequest(
+    `/api/workspaces/${firstWorkspace.id}/members/${secondRegistrationResult.user.id}`,
+    { method: 'PATCH', cookie, body: { role: 'ADMIN' } },
+  );
+  assert.equal(invalidRoleChange.status, 400, 'Roles outside the MVP role enum must be rejected.');
+
+  const lastOwnerCannotBeDemoted = await workspaceRequest(
+    `/api/workspaces/${firstWorkspace.id}/members/${registrationResult.user.id}`,
+    { method: 'PATCH', cookie, body: { role: 'MEMBER' } },
+  );
+  assert.equal(lastOwnerCannotBeDemoted.status, 409, 'A workspace must retain an owner.');
+
+  const lastOwnerCannotBeRemoved = await workspaceRequest(
+    `/api/workspaces/${firstWorkspace.id}/members/${registrationResult.user.id}`,
+    { method: 'DELETE', cookie },
+  );
+  assert.equal(lastOwnerCannotBeRemoved.status, 409, 'The final owner cannot be removed.');
+
+  const ownerRemoveMemberResponse = await workspaceRequest(
+    `/api/workspaces/${firstWorkspace.id}/members/${secondRegistrationResult.user.id}`,
+    { method: 'DELETE', cookie },
+  );
+  assert.equal(ownerRemoveMemberResponse.status, 200, 'Owners should be able to remove members.');
+  assert.equal((await ownerRemoveMemberResponse.json()).removed, true);
+
+  const readdedMemberResponse = await workspaceRequest(
+    `/api/workspaces/${firstWorkspace.id}/members`,
+    {
+      method: 'POST',
+      cookie,
+      body: { email: secondEmail },
+    },
+  );
+  assert.equal(readdedMemberResponse.status, 201);
+
+  const promoteMemberResponse = await workspaceRequest(
+    `/api/workspaces/${firstWorkspace.id}/members/${secondRegistrationResult.user.id}`,
+    { method: 'PATCH', cookie, body: { role: 'OWNER' } },
+  );
+  assert.equal(promoteMemberResponse.status, 200, 'Owners should be able to promote a member.');
+  assert.equal((await promoteMemberResponse.json()).member.role, 'OWNER');
+
+  const concurrentOwnerDemotions = await Promise.all([
+    workspaceRequest(`/api/workspaces/${firstWorkspace.id}/members/${registrationResult.user.id}`, {
+      method: 'PATCH',
+      cookie,
+      body: { role: 'MEMBER' },
+    }),
+    workspaceRequest(
+      `/api/workspaces/${firstWorkspace.id}/members/${secondRegistrationResult.user.id}`,
+      { method: 'PATCH', cookie, body: { role: 'MEMBER' } },
+    ),
+  ]);
+  const concurrentDemotionStatuses = concurrentOwnerDemotions.map((response) => response.status);
+  assert.ok(
+    concurrentDemotionStatuses.includes(200),
+    'At least one owner demotion should be applied.',
+  );
+  assert.ok(
+    concurrentDemotionStatuses.every((status) => [200, 403, 409].includes(status)),
+    'Concurrent owner mutations must finish or be rejected after observing the updated role.',
+  );
+
+  const remainingOwners = await pool.query(
+    `SELECT user_id
+     FROM commitmentos.workspace_member
+     WHERE workspace_id = $1 AND role = 'OWNER'`,
+    [firstWorkspace.id],
+  );
+  assert.equal(
+    remainingOwners.rows.length,
+    1,
+    'Exactly one owner must remain after concurrent demotions.',
+  );
+  const finalOwnerId = remainingOwners.rows[0].user_id;
+  const finalOwnerCookie = finalOwnerId === registrationResult.user.id ? cookie : secondCookie;
+
+  const finalOwnerCannotBeDemoted = await workspaceRequest(
+    `/api/workspaces/${firstWorkspace.id}/members/${finalOwnerId}`,
+    { method: 'PATCH', cookie: finalOwnerCookie, body: { role: 'MEMBER' } },
+  );
+  assert.equal(finalOwnerCannotBeDemoted.status, 409);
+
+  const finalOwnerCannotBeRemoved = await workspaceRequest(
+    `/api/workspaces/${firstWorkspace.id}/members/${finalOwnerId}`,
+    { method: 'DELETE', cookie: finalOwnerCookie },
+  );
+  assert.equal(finalOwnerCannotBeRemoved.status, 409);
 
   const thirdWorkspaceResponse = await workspaceRequest('/api/workspaces', {
     method: 'POST',
@@ -385,6 +533,31 @@ try {
     404,
     'Non-members must not be able to access another workspace.',
   );
+
+  const nonMemberCannotListSecondWorkspaceMembers = await workspaceRequest(
+    `/api/workspaces/${secondWorkspace.id}/members`,
+    { cookie: secondCookie },
+  );
+  assert.equal(nonMemberCannotListSecondWorkspaceMembers.status, 404);
+
+  const nonMemberCannotAddToSecondWorkspace = await workspaceRequest(
+    `/api/workspaces/${secondWorkspace.id}/members`,
+    { method: 'POST', cookie: secondCookie, body: { email } },
+  );
+  assert.equal(nonMemberCannotAddToSecondWorkspace.status, 404);
+
+  const nonMemberCannotChangeSecondWorkspaceRole = await workspaceRequest(
+    `/api/workspaces/${secondWorkspace.id}/members/${registrationResult.user.id}`,
+    { method: 'PATCH', cookie: secondCookie, body: { role: 'MEMBER' } },
+  );
+  assert.equal(nonMemberCannotChangeSecondWorkspaceRole.status, 404);
+
+  const nonMemberCannotRemoveFromSecondWorkspace = await workspaceRequest(
+    `/api/workspaces/${secondWorkspace.id}/members/${registrationResult.user.id}`,
+    { method: 'DELETE', cookie: secondCookie },
+  );
+  assert.equal(nonMemberCannotRemoveFromSecondWorkspace.status, 404);
+
   const firstUserCannotReadThirdWorkspace = await workspaceRequest(
     `/api/workspaces/${thirdWorkspace.id}`,
     { cookie },

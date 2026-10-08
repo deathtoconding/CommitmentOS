@@ -1,4 +1,4 @@
-# Workspaces and authorization (COM-105/106)
+# Workspaces and authorization (COM-105–107)
 
 ## Data model
 
@@ -9,24 +9,30 @@
 
 ## Reusable authorization checks
 
-`src/workspaces/authorization.ts` centralizes the authorization boundary:
+`src/workspaces/authorization.ts` centralizes the request authorization boundary:
 
 - `requireSession(headers)` validates the Better Auth session and returns `401` when absent.
 - `requireWorkspaceMember(headers, workspaceId)` checks membership and returns the authenticated session, membership, and workspace context. Unknown and non-member workspace IDs both return `404`.
 - `requireWorkspaceRole(headers, workspaceId, allowedRoles)` builds on the membership check and returns `403` when a member lacks a required role.
 
-Workspace API handlers use these guards instead of reimplementing session, membership, or role checks. Guard errors are generic and marked `private, no-store`.
+Workspace API handlers use these guards instead of reimplementing session, membership, or role checks. Guard errors and successful workspace API responses are marked `private, no-store`.
 
 ## API
 
-All endpoints require an authenticated Better Auth session and return `401 UNAUTHENTICATED` otherwise. Responses are marked `private, no-store`.
+All endpoints require an authenticated Better Auth session and return `401 UNAUTHENTICATED` otherwise. Workspace IDs are treated only as selectors; access is established from the authenticated user and that workspace's membership.
 
 - `POST /api/workspaces` — accepts only `{ "name": "..." }`. The name is trimmed and must contain 1–100 characters. The server derives the owner from the session; client-supplied user or role fields are rejected. Returns `201` with the created workspace and `OWNER` role.
 - `GET /api/workspaces` — lists only the caller's memberships and their workspaces.
 - `GET /api/workspaces/:id` — retrieves a workspace only when the caller has a matching membership. Missing and non-member workspaces both return `404 NOT_FOUND` to avoid disclosing tenant existence.
+- `GET /api/workspaces/:id/members` — any workspace member can list the workspace's member account details and roles. The query is scoped to the authorized workspace.
+- `POST /api/workspaces/:id/members` — `OWNER` only. Accepts `{ "email": "..." }` and adds an already-registered account as `MEMBER`. Unknown accounts return `404 USER_NOT_FOUND`; duplicate membership returns `409 ALREADY_MEMBER`. This increment does not send invitations or create pending invite tokens.
+- `PATCH /api/workspaces/:id/members/:userId` — `OWNER` only. Accepts `{ "role": "OWNER" | "MEMBER" }` and updates the selected member's role.
+- `DELETE /api/workspaces/:id/members/:userId` — `OWNER` only. Removes the selected membership.
 
-There is no stored “current workspace” selection; clients retrieve a workspace by ID, and membership is checked on every request. Member invitations and membership changes are deferred to COM-107. COM-106 establishes reusable membership/role checks but does not add enterprise RBAC or administrative policy.
+A member who attempts administration receives `403 FORBIDDEN`; unknown workspaces and target memberships return `404 NOT_FOUND`. The final `OWNER` cannot be demoted or removed (`409 FINAL_OWNER_REQUIRED`). Every owner-only mutation rechecks authorization inside a database transaction and locks the workspace row. Demotions and removals count owners before applying the change, serializing concurrent membership mutations so they cannot remove or demote the final owner.
+
+There is no stored “current workspace” selection; clients retrieve a workspace by ID, and membership is checked on every request. COM-107 implements existing-account membership management, but not invitation email, pending invitations, or broader RBAC policy.
 
 ## Tenant-isolation invariant
 
-The server gets the user ID from the authenticated session, never from request JSON. Workspace listing and lookup join `workspace_member` and filter by that user ID in the same query. A workspace ID supplied by a client is only a selector; it is never proof of access. Every future workspace-owned resource must use `requireWorkspaceMember` or `requireWorkspaceRole` before data access.
+The server gets the user ID from the authenticated session, never from request JSON. Workspace listing and lookup join `workspace_member` and filter by that user ID in the same query. Member listings filter by the workspace returned from the membership guard. Membership mutations validate the actor's owner role again within their database transaction. Every future workspace-owned resource must use `requireWorkspaceMember` or `requireWorkspaceRole` before data access.

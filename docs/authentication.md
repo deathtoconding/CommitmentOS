@@ -18,7 +18,7 @@ Do not log, commit, or expose the auth secret, passwords, session cookies, or da
 - `/api/auth/[...all]`: Better Auth API, with server-side Zod validation on email/password endpoints.
 - `/app`: protected server-rendered route; reads the authoritative database-backed session and redirects to `/login` when absent or revoked.
 
-Authentication answers **who is the user?** Workspace membership and tenant context are implemented separately in COM-105; COM-106 adds reusable membership and role checks without expanding into member administration or enterprise RBAC. See [workspace behavior](workspaces.md).
+Authentication answers **who is the user?** Workspace membership and tenant context are implemented separately in COM-105; COM-106 adds reusable membership and role checks, and COM-107 adds owner-only administration for existing registered accounts. Email invitations and enterprise RBAC remain out of scope. See [workspace behavior](workspaces.md).
 
 ## Test strategy
 
