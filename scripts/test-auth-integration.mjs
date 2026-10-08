@@ -1339,6 +1339,15 @@ try {
   assert.equal(remainingSessions.rows[0].count, 0, 'Logout must invalidate the database session.');
 
   console.log('Authentication, workspace, and commitment integration checks passed.');
+} catch (error) {
+  const diagnostic = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+  const escapedDiagnostic = diagnostic
+    .replaceAll('%', '%25')
+    .replaceAll('\r', '%0D')
+    .replaceAll('\n', '%0A');
+  console.error('Authentication integration test failed.', error);
+  process.stdout.write(`::error title=Authentication integration failure::${escapedDiagnostic}\n`);
+  process.exitCode = 1;
 } finally {
   await cleanupServer();
   const cleanupClient = await pool.connect();
