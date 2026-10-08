@@ -104,7 +104,7 @@ function appPageRequest(path, cookie) {
   });
 }
 
-async function assertAppPageUnavailable(response, hiddenWorkspaceNames = []) {
+async function assertAppPageUnavailable(response, hiddenValues = []) {
   const body = await response.text();
   // A streamed not-found page can carry HTTP 200 after Next has flushed the loading shell.
   assert.ok(
@@ -112,10 +112,10 @@ async function assertAppPageUnavailable(response, hiddenWorkspaceNames = []) {
     `An inaccessible app page should return 404 or a streamed not-found response, got ${response.status}.`,
   );
   assert.match(body, /Workspace unavailable/);
-  for (const workspaceName of hiddenWorkspaceNames) {
+  for (const hiddenValue of hiddenValues) {
     assert.ok(
-      !body.includes(workspaceName),
-      `The inaccessible workspace ${workspaceName} must stay hidden.`,
+      !body.includes(hiddenValue),
+      `The unavailable app page must not expose ${hiddenValue}.`,
     );
   }
 }
@@ -634,6 +634,53 @@ try {
   assert.match(secondWorkspaceInboxBody, /No deadline set/);
   assert.doesNotMatch(secondWorkspaceInboxBody, /Send the revised proposal/);
   assert.match(secondWorkspaceInbox.headers.get('cache-control') ?? '', /no-store/i);
+  assert.ok(
+    firstWorkspaceInboxBody.includes(
+      `/app/commitments/${persistenceCommitments.populatedId}?workspaceId=${firstWorkspace.id}`,
+    ),
+    'Inbox records should link to their workspace-scoped detail page.',
+  );
+
+  const authorizedCommitmentDetail = await appPageRequest(
+    `/app/commitments/${persistenceCommitments.populatedId}?workspaceId=${firstWorkspace.id}`,
+    cookie,
+  );
+  assert.equal(authorizedCommitmentDetail.status, 200);
+  const authorizedCommitmentDetailBody = await authorizedCommitmentDetail.text();
+  assert.match(authorizedCommitmentDetailBody, /Send the revised proposal/);
+  assert.ok(authorizedCommitmentDetailBody.includes('I will send the revised proposal.'));
+  assert.match(authorizedCommitmentDetailBody, /Open/);
+  assert.match(authorizedCommitmentDetailBody, /Customer Example/);
+  assert.doesNotMatch(authorizedCommitmentDetailBody, /I will send the revised proposal by Monday/);
+  assert.doesNotMatch(authorizedCommitmentDetailBody, /provider-message-123/);
+  assert.ok(!authorizedCommitmentDetailBody.includes('customer@example.test'));
+  assert.ok(
+    authorizedCommitmentDetailBody.includes(
+      `aria-current="page" class="app-nav-link app-nav-link-active" href="/app/commitments?workspaceId=${firstWorkspace.id}"`,
+    ),
+  );
+  assert.match(authorizedCommitmentDetail.headers.get('cache-control') ?? '', /no-store/i);
+
+  const crossWorkspaceCommitmentDetail = await appPageRequest(
+    `/app/commitments/${persistenceCommitments.populatedId}?workspaceId=${secondWorkspace.id}`,
+    cookie,
+  );
+  await assertAppPageUnavailable(crossWorkspaceCommitmentDetail, [
+    'I will send the revised proposal.',
+  ]);
+  const nonMemberCommitmentDetail = await appPageRequest(
+    `/app/commitments/${persistenceCommitments.populatedId}?workspaceId=${firstWorkspace.id}`,
+    secondCookie,
+  );
+  await assertAppPageUnavailable(nonMemberCommitmentDetail, [
+    'Product Team',
+    'I will send the revised proposal.',
+  ]);
+  const unknownCommitmentDetail = await appPageRequest(
+    `/app/commitments/${randomUUID()}?workspaceId=${firstWorkspace.id}`,
+    cookie,
+  );
+  await assertAppPageUnavailable(unknownCommitmentDetail);
 
   const firstCommitmentsPath = `/api/workspaces/${firstWorkspace.id}/commitments`;
   const apiCommitmentCollectionAnonymous = await workspaceRequest(firstCommitmentsPath);
@@ -934,6 +981,7 @@ try {
 
   const auditEvents = [];
   let auditCursor = null;
+  let firstAuditCursor = null;
   for (let pageNumber = 0; pageNumber < 10; pageNumber += 1) {
     const cursorQuery = auditCursor ? `&cursor=${encodeURIComponent(auditCursor)}` : '';
     const auditPageResponse = await workspaceRequest(`${auditEventsPath}?limit=3${cursorQuery}`, {
@@ -944,6 +992,7 @@ try {
     assert.ok(auditPage.events.length <= 3);
     auditEvents.push(...auditPage.events);
     auditCursor = auditPage.nextCursor;
+    if (pageNumber === 0) firstAuditCursor = auditCursor;
     if (auditCursor === null) break;
   }
   assert.equal(new Set(auditEvents.map((event) => event.id)).size, auditEvents.length);
@@ -976,6 +1025,47 @@ try {
   );
   assert.ok(!auditMetadata.includes('Counterparty confirmed delivery.'));
   assert.ok(!auditMetadata.includes('Send the revised integration report.'));
+
+  const auditedCommitmentDetail = await appPageRequest(
+    `/app/commitments/${apiCommitment.id}?workspaceId=${firstWorkspace.id}`,
+    cookie,
+  );
+  assert.equal(auditedCommitmentDetail.status, 200);
+  const auditedCommitmentDetailBody = await auditedCommitmentDetail.text();
+  for (const eventLabel of [
+    'Commitment created',
+    'Owner assignment changed',
+    'Deadline updated',
+    'Commitment confirmed',
+    'Completion evidence recorded',
+    'Commitment completed',
+  ]) {
+    assert.ok(
+      auditedCommitmentDetailBody.includes(eventLabel),
+      `The commitment detail timeline should include ${eventLabel}.`,
+    );
+  }
+  assert.ok(
+    auditedCommitmentDetailBody.indexOf('Commitment completed') <
+      auditedCommitmentDetailBody.indexOf('Commitment created'),
+    'The detail timeline should order the newest audit event first.',
+  );
+  assert.doesNotMatch(auditedCommitmentDetailBody, /Private source excerpt/);
+  assert.doesNotMatch(auditedCommitmentDetailBody, /Counterparty confirmed delivery/);
+  assert.ok(!auditedCommitmentDetailBody.includes('customer@example.test'));
+  assert.match(auditedCommitmentDetail.headers.get('cache-control') ?? '', /no-store/i);
+  assert.ok(firstAuditCursor, 'The audit timeline pagination test needs an older-events cursor.');
+  const olderAuditTimelinePage = await appPageRequest(
+    `/app/commitments/${apiCommitment.id}?workspaceId=${firstWorkspace.id}&auditCursor=${encodeURIComponent(firstAuditCursor)}`,
+    cookie,
+  );
+  assert.equal(olderAuditTimelinePage.status, 200);
+  assert.match(await olderAuditTimelinePage.text(), /Commitment created/);
+  const invalidAuditTimelineCursor = await appPageRequest(
+    `/app/commitments/${apiCommitment.id}?workspaceId=${firstWorkspace.id}&auditCursor=not-a-cursor`,
+    cookie,
+  );
+  await assertAppPageUnavailable(invalidAuditTimelineCursor);
 
   const immutableAuditEventId = auditEvents[0].id;
   await assert.rejects(

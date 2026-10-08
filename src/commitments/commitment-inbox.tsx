@@ -3,6 +3,7 @@ import { commitmentStatusLabel, formatCommitmentDeadline } from './presentation'
 
 type CommitmentInboxProps = {
   commitments: readonly Commitment[];
+  workspaceId: string;
 };
 
 function CommitmentInboxEmptyState() {
@@ -34,8 +35,10 @@ function CommitmentInboxEmptyState() {
   );
 }
 
-export function CommitmentInbox({ commitments }: CommitmentInboxProps) {
+export function CommitmentInbox({ commitments, workspaceId }: CommitmentInboxProps) {
   if (commitments.length === 0) return <CommitmentInboxEmptyState />;
+
+  const detailQuery = new URLSearchParams({ workspaceId });
 
   return (
     <section aria-labelledby="commitment-inbox-heading" className="commitment-inbox-panel">
@@ -52,45 +55,51 @@ export function CommitmentInbox({ commitments }: CommitmentInboxProps) {
       <ol aria-label="Commitment inbox" className="commitment-inbox-list">
         {commitments.map((commitment) => (
           <li key={commitment.id}>
-            <article className="commitment-inbox-card">
-              <div className="commitment-inbox-card-heading">
-                <div className="commitment-inbox-card-copy">
-                  <h3>{commitment.normalizedAction}</h3>
-                  <p>{commitment.commitmentText}</p>
-                </div>
-                <span
-                  className="commitment-status-pill"
-                  data-status={commitment.status.toLowerCase()}
-                >
-                  {commitmentStatusLabel(commitment.status)}
-                </span>
-              </div>
-
-              <dl className="commitment-inbox-metadata">
-                <div>
-                  <dt>Owner</dt>
-                  <dd>{commitment.ownerUserId ? 'Assigned' : 'Unassigned'}</dd>
-                </div>
-                <div>
-                  <dt>Deadline</dt>
-                  <dd>
-                    {commitment.dueAt ? (
-                      <time dateTime={commitment.dueAt.toISOString()}>
-                        {formatCommitmentDeadline(commitment.dueAt, commitment.dueTimezone)}
-                      </time>
-                    ) : (
-                      'No deadline set'
-                    )}
-                  </dd>
-                </div>
-                {commitment.counterpartyName ? (
-                  <div>
-                    <dt>Counterparty</dt>
-                    <dd>{commitment.counterpartyName}</dd>
+            <a
+              aria-label={`View commitment: ${commitment.normalizedAction}`}
+              className="commitment-inbox-link"
+              href={`/app/commitments/${encodeURIComponent(commitment.id)}?${detailQuery.toString()}`}
+            >
+              <article className="commitment-inbox-card">
+                <div className="commitment-inbox-card-heading">
+                  <div className="commitment-inbox-card-copy">
+                    <h3>{commitment.normalizedAction}</h3>
+                    <p>{commitment.commitmentText}</p>
                   </div>
-                ) : null}
-              </dl>
-            </article>
+                  <span
+                    className="commitment-status-pill"
+                    data-status={commitment.status.toLowerCase()}
+                  >
+                    {commitmentStatusLabel(commitment.status)}
+                  </span>
+                </div>
+
+                <dl className="commitment-inbox-metadata">
+                  <div>
+                    <dt>Owner</dt>
+                    <dd>{commitment.ownerUserId ? 'Assigned' : 'Unassigned'}</dd>
+                  </div>
+                  <div>
+                    <dt>Deadline</dt>
+                    <dd>
+                      {commitment.dueAt ? (
+                        <time dateTime={commitment.dueAt.toISOString()}>
+                          {formatCommitmentDeadline(commitment.dueAt, commitment.dueTimezone)}
+                        </time>
+                      ) : (
+                        'No deadline set'
+                      )}
+                    </dd>
+                  </div>
+                  {commitment.counterpartyName ? (
+                    <div>
+                      <dt>Counterparty</dt>
+                      <dd>{commitment.counterpartyName}</dd>
+                    </div>
+                  ) : null}
+                </dl>
+              </article>
+            </a>
           </li>
         ))}
       </ol>

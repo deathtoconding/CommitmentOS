@@ -59,7 +59,11 @@ PostgreSQL triggers reject `UPDATE`, `DELETE`, and `TRUNCATE` on audit events. T
 
 The authenticated `/app/inbox` page resolves the active workspace against memberships for the current server-verified session before querying commitments. It uses the authorized workspace ID rather than treating a query-string workspace ID or client state as authority. The list is ordered newest first by the existing workspace-scoped query. It presents the commitment/action text, lifecycle status, whether an owner is assigned, and the deadline when present; unknown deadlines and owners remain explicitly unknown. The inbox does not render source excerpts, provider message IDs, counterparty email addresses, completion evidence, or other message-body content. Empty workspaces receive a dedicated empty state, and the app's loading/error boundaries cover pending and failed loads.
 
-Deadline display uses the stored IANA timezone when valid, including timezone-database daylight-saving transitions. If the stored timezone is missing or invalid, the exact instant is displayed in UTC; the UI does not infer a local timezone or deadline.
+Deadline display uses the stored IANA timezone when valid, including timezone-database daylight-saving transitions. If the stored timezone is missing or invalid, the exact instant is displayed in UTC; the UI does not infer a local timezone or deadline. Each list item opens the workspace-scoped detail route added in COM-114.
+
+## Commitment detail (COM-114)
+
+The authenticated `/app/commitments/:commitmentId` page resolves the requested workspace against memberships for the current server-verified session, then loads the record with both the authorized workspace ID and commitment ID. Missing, cross-workspace, and nonmember requests render the same generic not-found state. The page shows the stored commitment/action text, status, known owner/deadline/counterparty name, creation time, and a read-only audit timeline. It does not render source excerpts, provider message IDs, counterparty email, or completion-evidence contents. Audit history is scoped to the same workspace and commitment, ordered newest first, and uses a validated keyset cursor to load older events.
 
 ## Indexes
 

@@ -131,7 +131,9 @@ export function AppShell({ children, user, workspaces }: AppShellProps) {
     noticeValues.length === 1 && noticeValues[0] === 'workspace-switched' && activeWorkspace
       ? `Switched to ${activeWorkspace.name}.`
       : null;
-  const activeSection = sectionNames[pathname] ?? 'Workspace';
+  const activeSection = pathname.startsWith('/app/commitments/')
+    ? 'Commitments'
+    : (sectionNames[pathname] ?? 'Workspace');
 
   function selectWorkspace(nextWorkspaceId: string) {
     if (!workspaces.some((workspace) => workspace.id === nextWorkspaceId)) return;
@@ -176,7 +178,9 @@ export function AppShell({ children, user, workspaces }: AppShellProps) {
         <div className="app-sidebar-label">Workspace</div>
         <nav aria-label="Primary" className="app-navigation" id="app-primary-navigation">
           {navigationItems.map((item) => {
-            const isActive = pathname === item.href;
+            const isActive =
+              pathname === item.href ||
+              (item.href === '/app/commitments' && pathname.startsWith('/app/commitments/'));
             return (
               <a
                 aria-current={isActive ? 'page' : undefined}

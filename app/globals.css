@@ -971,12 +971,27 @@ a:focus-visible {
   list-style: none;
 }
 
+.commitment-inbox-link {
+  display: block;
+  border-radius: 1rem;
+  color: inherit;
+  text-decoration: none;
+}
+
+.commitment-inbox-link:hover .commitment-inbox-card {
+  border-color: #c9ddd0;
+  box-shadow: 0 12px 30px rgb(45 74 54 / 8%);
+}
+
 .commitment-inbox-card {
   padding: 1.25rem 1.35rem;
   border: 1px solid #e1eae4;
   border-radius: 1rem;
   background: linear-gradient(135deg, #fff, #fbfdfb);
   box-shadow: 0 8px 24px rgb(45 74 54 / 4%);
+  transition:
+    border-color 140ms ease,
+    box-shadow 140ms ease;
 }
 
 .commitment-inbox-card-heading {
@@ -1054,7 +1069,8 @@ a:focus-visible {
   color: #78827c;
 }
 
-.commitment-inbox-metadata {
+.commitment-inbox-metadata,
+.commitment-detail-metadata {
   display: flex;
   flex-wrap: wrap;
   gap: 0.75rem 2rem;
@@ -1063,13 +1079,15 @@ a:focus-visible {
   border-top: 1px solid #edf1ee;
 }
 
-.commitment-inbox-metadata > div {
+.commitment-inbox-metadata > div,
+.commitment-detail-metadata > div {
   display: grid;
   gap: 0.22rem;
   min-width: 6rem;
 }
 
-.commitment-inbox-metadata dt {
+.commitment-inbox-metadata dt,
+.commitment-detail-metadata dt {
   color: #8a9991;
   font-size: 0.62rem;
   font-weight: 700;
@@ -1077,7 +1095,8 @@ a:focus-visible {
   text-transform: uppercase;
 }
 
-.commitment-inbox-metadata dd {
+.commitment-inbox-metadata dd,
+.commitment-detail-metadata dd {
   margin: 0;
   color: #4b6255;
   font-size: 0.74rem;
@@ -1086,6 +1105,125 @@ a:focus-visible {
 
 .commitment-inbox-empty-state {
   min-height: 19rem;
+}
+
+.commitment-detail-card {
+  padding: 1.4rem;
+  border: 1px solid #e1eae4;
+  border-radius: 1rem;
+  background: linear-gradient(135deg, #fff, #fbfdfb);
+  box-shadow: 0 8px 24px rgb(45 74 54 / 4%);
+}
+
+.commitment-detail-card-heading {
+  padding-bottom: 0.9rem;
+  border-bottom: 1px solid #edf1ee;
+}
+
+.commitment-detail-card-heading h2 {
+  margin: 0;
+  color: #2c4437;
+  font-size: 1rem;
+}
+
+.commitment-detail-metadata {
+  margin-top: 0;
+}
+
+.commitment-audit-card {
+  margin-top: 1rem;
+  padding: 1.4rem;
+  border: 1px solid #e1eae4;
+  border-radius: 1rem;
+  background: #fff;
+}
+
+.commitment-audit-empty {
+  margin: 1rem 0 0;
+  color: #7b8b82;
+  font-size: 0.8rem;
+}
+
+.commitment-audit-list {
+  display: grid;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.commitment-audit-event {
+  position: relative;
+  display: grid;
+  grid-template-columns: 0.55rem minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 0.8rem;
+  padding: 1rem 0;
+  border-bottom: 1px solid #eef2ef;
+}
+
+.commitment-audit-event:last-child {
+  border-bottom: 0;
+}
+
+.commitment-audit-marker {
+  width: 0.45rem;
+  height: 0.45rem;
+  margin-top: 0.42rem;
+  border-radius: 50%;
+  background: #70a583;
+  box-shadow: 0 0 0 3px #edf5ef;
+}
+
+.commitment-audit-event-copy h3 {
+  margin: 0;
+  color: #3b5245;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.commitment-audit-event-copy p {
+  margin: 0.25rem 0 0;
+  color: #617569;
+  font-size: 0.73rem;
+}
+
+.commitment-audit-event-copy span {
+  display: block;
+  margin-top: 0.3rem;
+  color: #8b9991;
+  font-size: 0.64rem;
+}
+
+.commitment-audit-event time {
+  color: #7c8b83;
+  font-size: 0.66rem;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.commitment-audit-more {
+  display: inline-flex;
+  margin-top: 0.85rem;
+  color: #4a7757;
+  font-size: 0.74rem;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.commitment-detail-back-link {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  gap: 0.55rem;
+  margin-top: 1.25rem;
+  color: #4a7757;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.commitment-detail-back-link span {
+  font-size: 1rem;
 }
 
 .app-page-footer {
@@ -1495,6 +1633,20 @@ a:focus-visible {
 
   .commitment-inbox-metadata {
     gap: 0.8rem 1.2rem;
+  }
+
+  .commitment-detail-card,
+  .commitment-audit-card {
+    padding: 1rem;
+  }
+
+  .commitment-audit-event {
+    grid-template-columns: 0.55rem minmax(0, 1fr);
+  }
+
+  .commitment-audit-event time {
+    grid-column: 2;
+    text-align: left;
   }
 
   .settings-panels {

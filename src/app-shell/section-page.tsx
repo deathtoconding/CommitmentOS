@@ -278,7 +278,7 @@ export async function AppSectionPage({
           workspace={workspace ? { name: workspace.name, role: workspace.role } : null}
         />
       ) : section === 'inbox' && workspace ? (
-        <CommitmentInbox commitments={commitments} />
+        <CommitmentInbox commitments={commitments} workspaceId={workspace.id} />
       ) : workspace ? (
         <EmptyState copy={sectionCopy[section]} />
       ) : (
