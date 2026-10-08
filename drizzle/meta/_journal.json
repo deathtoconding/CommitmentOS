@@ -29,6 +29,13 @@
       "when": 1791474754222,
       "tag": "0003_commitment_aggregate",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1791482470605,
+      "tag": "0004_commitment_audit_events",
+      "breakpoints": true
     }
   ]
 }

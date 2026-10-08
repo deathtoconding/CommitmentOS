@@ -2,7 +2,7 @@
 
 CommitmentOS turns business conversations into tracked commitments so teams can follow through on what they promised.
 
-This repository is being built in dependency-ordered increments. The current implementation establishes the application runtime, quality gates, PostgreSQL foundation, email/password authentication, workspace membership management, reusable workspace authorization guards, and the commitment persistence, lifecycle, and workspace-scoped API. Communication integrations remain later stages.
+This repository is being built in dependency-ordered increments. The current implementation establishes the application runtime, quality gates, PostgreSQL foundation, email/password authentication, workspace membership management, reusable workspace authorization guards, the commitment persistence/lifecycle/workspace API, and immutable commitment audit history. Communication integrations remain later stages.
 
 ## Stack
 
@@ -45,7 +45,7 @@ npm run test:integration
 npm audit --audit-level=moderate
 ```
 
-`npm run test:integration` requires the database migrations to have been applied and a production build to exist. It starts a local Next.js server and exercises authentication, workspace membership and authorization, commitment persistence constraints, tenant-scoped commitment API access, and lifecycle transitions against PostgreSQL.
+`npm run test:integration` requires the database migrations to have been applied and a production build to exist. Use a dedicated local/CI test database: the script creates and removes temporary fixtures. It starts a local Next.js server and exercises authentication, workspace membership and authorization, commitment persistence constraints, tenant-scoped commitment API and audit-history access, immutable audit records, atomic mutation/audit writes, and lifecycle transitions against PostgreSQL.
 
 ## Database migrations
 
@@ -60,8 +60,8 @@ The `commitmentos` PostgreSQL schema is reserved for application tables. Do not 
 
 ## Authentication scope
 
-COM-104 uses Better Auth's email/password and database-session support. Passwords use Better Auth's built-in scrypt hashing; session cookies are HttpOnly and SameSite by default and Secure in production. Sign-up does not automatically establish a session, and duplicate-account registration receives a generic response to reduce account enumeration. Email verification, account recovery, and OAuth providers remain tracked follow-up work. COM-105 adds workspace membership, COM-106 adds reusable session/membership/role guards, COM-107 adds owner-only administration for existing registered accounts, COM-108 adds commitment persistence, and COM-109 adds the commitment lifecycle transition service. Email invitations and pending invites remain out of scope. COM-110 adds the workspace-scoped commitment API. See [ADR-0002](docs/adr/0002-authentication.md) for the authentication decision, [workspace behavior](docs/workspaces.md) for tenant scoping, and [commitment behavior](docs/commitments.md) for the current aggregate and lifecycle scope.
+COM-104 uses Better Auth's email/password and database-session support. Passwords use Better Auth's built-in scrypt hashing; session cookies are HttpOnly and SameSite by default and Secure in production. Sign-up does not automatically establish a session, and duplicate-account registration receives a generic response to reduce account enumeration. Email verification, account recovery, and OAuth providers remain tracked follow-up work. COM-105 adds workspace membership, COM-106 adds reusable session/membership/role guards, COM-107 adds owner-only administration for existing registered accounts, COM-108 adds commitment persistence, and COM-109 adds the commitment lifecycle transition service. Email invitations and pending invites remain out of scope. COM-110 adds the workspace-scoped commitment API, and COM-111 adds immutable audit history for consequential commitment mutations. See [ADR-0002](docs/adr/0002-authentication.md) for the authentication decision, [workspace behavior](docs/workspaces.md) for tenant scoping, and [commitment behavior](docs/commitments.md) for the current aggregate and lifecycle scope.
 
 ## CI
 
-GitHub Actions runs formatting, lint, TypeScript checks, dependency audit, unit tests, PostgreSQL migrations/smoke checks, a production build, and end-to-end authentication and workspace authorization checks against an ephemeral PostgreSQL service.
+GitHub Actions runs formatting, lint, TypeScript checks, dependency audit, unit tests, PostgreSQL migrations/smoke checks, a production build, and end-to-end authentication, workspace authorization, commitment API, lifecycle, and audit-history checks against an ephemeral PostgreSQL service.

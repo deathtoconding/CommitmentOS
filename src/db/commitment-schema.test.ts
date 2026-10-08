@@ -1,9 +1,17 @@
 import { describe, expect, it } from 'vitest';
+import { COMMITMENT_AUDIT_EVENT_TYPES } from '../commitments/audit-model';
 import { getTableConfig } from 'drizzle-orm/pg-core';
-import { commitment, commitmentStatus } from './schema';
+import {
+  commitment,
+  commitmentAuditEvent,
+  commitmentAuditEventType,
+  commitmentStatus,
+} from './schema';
 
 const tableConfig = getTableConfig(commitment);
 const columns = new Map(tableConfig.columns.map((column) => [column.name, column]));
+const auditConfig = getTableConfig(commitmentAuditEvent);
+const auditColumns = new Map(auditConfig.columns.map((column) => [column.name, column]));
 
 describe('commitment PostgreSQL schema', () => {
   it('uses the complete roadmap status enum', () => {
@@ -62,6 +70,40 @@ describe('commitment PostgreSQL schema', () => {
       'commitment_workspace_status_due_at_idx',
       'commitment_workspace_owner_user_id_idx',
       'commitment_workspace_source_message_idx',
+    ]);
+    expect(tableConfig.uniqueConstraints.map((constraint) => constraint.name)).toContain(
+      'commitment_workspace_id_id_unique',
+    );
+  });
+});
+
+describe('commitment audit event PostgreSQL schema', () => {
+  it('defines the required current and forward-compatible event types', () => {
+    expect(commitmentAuditEventType.enumValues).toEqual(COMMITMENT_AUDIT_EVENT_TYPES);
+  });
+
+  it('requires actor, tenant scope, commitment, event type, details, and occurrence time', () => {
+    for (const name of [
+      'id',
+      'workspace_id',
+      'commitment_id',
+      'actor_user_id',
+      'event_type',
+      'details',
+      'occurred_at',
+    ]) {
+      expect(auditColumns.get(name)?.notNull, `${name} should be required`).toBe(true);
+    }
+    expect(auditConfig.foreignKeys).toHaveLength(3);
+    expect(auditConfig.checks.map((constraint) => constraint.name)).toEqual([
+      'commitment_audit_event_details_object',
+    ]);
+  });
+
+  it('indexes audit history by workspace and commitment', () => {
+    expect(auditConfig.indexes.map((index) => index.config.name)).toEqual([
+      'commitment_audit_event_workspace_commitment_occurred_idx',
+      'commitment_audit_event_workspace_occurred_idx',
     ]);
   });
 });

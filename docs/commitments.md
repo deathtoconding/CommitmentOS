@@ -45,7 +45,15 @@ All commitment API routes require an authenticated workspace member. Collection 
 
 Request objects are strict: workspace, creator, timestamps, and status on creation are server-owned. Nullable owner, source, counterparty, deadline, confidence, and excerpt fields remain nullable; an assigned owner must be a member of that workspace. On update, callers cannot write lifecycle timestamps. Status changes are serialized against the stored row and must pass through `transitionCommitment`; invalid or same-state transitions return `409 INVALID_TRANSITION`. Completion requires `completionSignal: true` or completion evidence already stored before the transition request. Completion evidence submitted in the same request is not treated as pre-existing evidence. The service sets `completedAt`; it does not manufacture evidence. `DISMISSED` is the lifecycle alternative to deleting a record; there is no physical-delete endpoint.
 
-The API does not add audit persistence, scheduling, deadline evaluation, AI extraction, or notifications.
+COM-110 itself adds no audit persistence, scheduling, deadline evaluation, AI extraction, or notifications; COM-111 adds the audit trail below.
+
+## Immutable audit trail (COM-111)
+
+API-created commitments receive a `CREATED` event. API updates persist `EDITED`, `REASSIGNED`, `DEADLINE_CHANGED`, `STATUS_CHANGED`, `CONFIRMED`, `DISMISSED`, `COMPLETED`, and `COMPLETION_EVIDENCE_RECORDED` events as applicable. The event types also reserve `FOLLOW_UP_GENERATED`, `APPROVED`, and `SENT` for later stories; no such events are fabricated before those workflows exist.
+
+Each event records the workspace, commitment, authenticated actor, type, occurrence time, and structured details. The composite workspace/commitment foreign key prevents cross-tenant associations. All commitment updates and their audit records share one database transaction; failed event insertion rolls back the mutation. The migration does not backfill history for records created before COM-111. Event details record changed field names and relevant owner/deadline/status values, but do not duplicate commitment text, source excerpts, or completion-evidence contents.
+
+PostgreSQL triggers reject `UPDATE`, `DELETE`, and `TRUNCATE` on audit events. The workspace-scoped read endpoint is `GET /api/workspaces/:id/commitments/:commitmentId/audit-events`, available to workspace members. It uses a validated keyset cursor and a page size of 1–100 (default 50), and returns 404 for missing or cross-workspace commitments. The `0004_commitment_audit_events` migration also prevents deleting users, workspaces, or commitments referenced by immutable audit history.
 
 ## Indexes
 

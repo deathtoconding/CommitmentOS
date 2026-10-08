@@ -1,10 +1,13 @@
 import { sql } from 'drizzle-orm';
+import { COMMITMENT_AUDIT_EVENT_TYPES } from '../../commitments/audit-model';
 import { COMMITMENT_STATUSES } from '../../commitments/model';
 import {
   boolean,
   check,
   doublePrecision,
+  foreignKey,
   index,
+  jsonb,
   pgSchema,
   text,
   timestamp,
@@ -138,6 +141,7 @@ export const commitment = commitmentosSchema.table(
     check('commitment_text_nonempty', sql`length(btrim("commitment_text")) > 0`),
     check('commitment_action_nonempty', sql`length(btrim("normalized_action")) > 0`),
     check('commitment_confidence_score_range', sql`"confidence_score" BETWEEN 0 AND 1`),
+    unique('commitment_workspace_id_id_unique').on(table.workspaceId, table.id),
     index('commitment_workspace_status_due_at_idx').on(
       table.workspaceId,
       table.status,
@@ -145,6 +149,44 @@ export const commitment = commitmentosSchema.table(
     ),
     index('commitment_workspace_owner_user_id_idx').on(table.workspaceId, table.ownerUserId),
     index('commitment_workspace_source_message_idx').on(table.workspaceId, table.sourceMessageId),
+  ],
+);
+
+export const commitmentAuditEventType = commitmentosSchema.enum(
+  'commitment_audit_event_type',
+  COMMITMENT_AUDIT_EVENT_TYPES,
+);
+
+export const commitmentAuditEvent = commitmentosSchema.table(
+  'commitment_audit_event',
+  {
+    id: text('id').primaryKey(),
+    workspaceId: text('workspace_id')
+      .notNull()
+      .references(() => workspace.id, { onDelete: 'restrict' }),
+    commitmentId: text('commitment_id').notNull(),
+    actorUserId: text('actor_user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'restrict' }),
+    eventType: commitmentAuditEventType('event_type').notNull(),
+    details: jsonb('details').$type<Record<string, unknown>>().default({}).notNull(),
+    occurredAt: timestamp('occurred_at', { withTimezone: true, mode: 'date' })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    foreignKey({
+      name: 'commitment_audit_event_workspace_commitment_fk',
+      columns: [table.workspaceId, table.commitmentId],
+      foreignColumns: [commitment.workspaceId, commitment.id],
+    }).onDelete('restrict'),
+    check('commitment_audit_event_details_object', sql`jsonb_typeof("details") = 'object'`),
+    index('commitment_audit_event_workspace_commitment_occurred_idx').on(
+      table.workspaceId,
+      table.commitmentId,
+      table.occurredAt,
+    ),
+    index('commitment_audit_event_workspace_occurred_idx').on(table.workspaceId, table.occurredAt),
   ],
 );
 

@@ -1,7 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, lt, or } from 'drizzle-orm';
 import { database } from '../db/client';
-import { commitment, workspaceMember } from '../db/schema';
+import { commitment, commitmentAuditEvent, workspaceMember } from '../db/schema';
+import {
+  commitmentCreatedAuditEvent,
+  createCommitmentAuditEvents,
+  type CommitmentAuditEventDraft,
+} from './audit-model';
 import type { Commitment } from './model';
 import { transitionCommitment } from './lifecycle';
 import type { CreateCommitmentInput, UpdateCommitmentInput } from './schemas';
@@ -25,6 +30,29 @@ async function hasWorkspaceMembership(
   return membership ? 'member' : 'not-member';
 }
 
+async function persistAuditEvents(
+  transaction: CommitmentTransaction,
+  workspaceId: string,
+  commitmentId: string,
+  actorUserId: string,
+  events: readonly CommitmentAuditEventDraft[],
+  occurredAt: Date,
+): Promise<void> {
+  if (events.length === 0) return;
+
+  await transaction.insert(commitmentAuditEvent).values(
+    events.map((event) => ({
+      id: randomUUID(),
+      workspaceId,
+      commitmentId,
+      actorUserId,
+      eventType: event.eventType,
+      details: event.details,
+      occurredAt,
+    })),
+  );
+}
+
 export async function listWorkspaceCommitments(workspaceId: string): Promise<Commitment[]> {
   return database
     .select()
@@ -44,6 +72,39 @@ export async function getWorkspaceCommitment(
     .limit(1);
 
   return record ?? null;
+}
+
+export type CommitmentAuditEventCursor = {
+  id: string;
+  occurredAt: Date;
+};
+
+export async function listWorkspaceCommitmentAuditEvents(
+  workspaceId: string,
+  commitmentId: string,
+  pageSize: number,
+  cursor: CommitmentAuditEventCursor | null,
+) {
+  const scope = and(
+    eq(commitmentAuditEvent.workspaceId, workspaceId),
+    eq(commitmentAuditEvent.commitmentId, commitmentId),
+  );
+  const cursorCondition = cursor
+    ? or(
+        lt(commitmentAuditEvent.occurredAt, cursor.occurredAt),
+        and(
+          eq(commitmentAuditEvent.occurredAt, cursor.occurredAt),
+          lt(commitmentAuditEvent.id, cursor.id),
+        ),
+      )
+    : undefined;
+
+  return database
+    .select()
+    .from(commitmentAuditEvent)
+    .where(cursorCondition ? and(scope, cursorCondition) : scope)
+    .orderBy(desc(commitmentAuditEvent.occurredAt), desc(commitmentAuditEvent.id))
+    .limit(pageSize + 1);
 }
 
 export type CreateWorkspaceCommitmentResult =
@@ -69,6 +130,7 @@ export async function createWorkspaceCommitment(
       return { status: 'owner-not-member' };
     }
 
+    const occurredAt = new Date();
     const [created] = await transaction
       .insert(commitment)
       .values({
@@ -87,6 +149,15 @@ export async function createWorkspaceCommitment(
         sourceExcerpt: input.sourceExcerpt,
       })
       .returning();
+
+    await persistAuditEvents(
+      transaction,
+      created.workspaceId,
+      created.id,
+      actorUserId,
+      [commitmentCreatedAuditEvent(created)],
+      occurredAt,
+    );
 
     return { status: 'created', commitment: created };
   });
@@ -152,6 +223,18 @@ export async function updateWorkspaceCommitment(
       }
     }
 
+    const candidate: Commitment = {
+      ...current,
+      ...changes,
+      status: targetStatus ?? current.status,
+      ...(completedAt !== undefined ? { completedAt } : {}),
+      updatedAt: occurredAt,
+    };
+    const auditEvents = createCommitmentAuditEvents(current, candidate);
+    if (auditEvents.length === 0) {
+      return { status: 'updated', commitment: current };
+    }
+
     const [updated] = await transaction
       .update(commitment)
       .set({
@@ -166,6 +249,15 @@ export async function updateWorkspaceCommitment(
     if (!updated) {
       return { status: 'not-found' };
     }
+
+    await persistAuditEvents(
+      transaction,
+      updated.workspaceId,
+      updated.id,
+      actorUserId,
+      auditEvents,
+      occurredAt,
+    );
 
     return { status: 'updated', commitment: updated };
   });

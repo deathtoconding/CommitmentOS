@@ -44,6 +44,15 @@ export const createCommitmentSchema = z
   })
   .strict();
 
+export const commitmentAuditEventCursorSchema = z
+  .object({
+    id: z.string().trim().min(1).max(255),
+    occurredAt: z.string().datetime({ offset: true }),
+  })
+  .strict();
+
+export const commitmentAuditEventLimitSchema = z.coerce.number().int().min(1).max(100);
+
 export const updateCommitmentSchema = z
   .object({
     commitmentText: commitmentTextSchema.optional(),
@@ -71,3 +80,5 @@ export const updateCommitmentSchema = z
 
 export type CreateCommitmentInput = z.infer<typeof createCommitmentSchema>;
 export type UpdateCommitmentInput = z.infer<typeof updateCommitmentSchema>;
+export type CommitmentAuditEventCursorInput = z.infer<typeof commitmentAuditEventCursorSchema>;
+export type CommitmentAuditEventLimitInput = z.infer<typeof commitmentAuditEventLimitSchema>;

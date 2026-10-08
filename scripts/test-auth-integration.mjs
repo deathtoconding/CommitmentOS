@@ -153,6 +153,17 @@ async function insertCommitment({
   );
 }
 
+async function assertDatabaseRejects(query, values, code, message) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await assert.rejects(client.query(query, values), (error) => error.code === code, message);
+  } finally {
+    await client.query('ROLLBACK');
+    client.release();
+  }
+}
+
 async function testCommitmentPersistence({ workspaceId, otherWorkspaceId, userId }) {
   const populatedId = randomUUID();
   const populatedDueAt = new Date('2026-11-02T09:30:00.000Z');
@@ -521,6 +532,10 @@ try {
     `${firstCommitmentsPath}/${persistenceCommitments.populatedId}`,
   );
   assert.equal(apiCommitmentItemAnonymous.status, 401);
+  const apiCommitmentAuditAnonymous = await workspaceRequest(
+    `${firstCommitmentsPath}/${persistenceCommitments.populatedId}/audit-events`,
+  );
+  assert.equal(apiCommitmentAuditAnonymous.status, 401);
 
   const secondUserCannotListCommitmentsBeforeMembership = await workspaceRequest(
     firstCommitmentsPath,
@@ -580,6 +595,29 @@ try {
   assert.equal(apiCommitment.completionEvidence, null);
   assert.equal(apiCommitment.completedAt, null);
 
+  const createdAuditResult = await pool.query(
+    `SELECT workspace_id, commitment_id, actor_user_id, event_type, details, occurred_at
+     FROM commitmentos.commitment_audit_event
+     WHERE commitment_id = $1`,
+    [apiCommitment.id],
+  );
+  assert.equal(createdAuditResult.rows.length, 1, 'Creation must be audited atomically.');
+  assert.equal(createdAuditResult.rows[0].workspace_id, firstWorkspace.id);
+  assert.equal(createdAuditResult.rows[0].commitment_id, apiCommitment.id);
+  assert.equal(createdAuditResult.rows[0].actor_user_id, registrationResult.user.id);
+  assert.equal(createdAuditResult.rows[0].event_type, 'CREATED');
+  assert.equal(createdAuditResult.rows[0].details.initialStatus, 'DETECTED');
+  assert.ok(createdAuditResult.rows[0].occurred_at instanceof Date);
+
+  await assertDatabaseRejects(
+    `INSERT INTO commitmentos.commitment_audit_event (
+       id, workspace_id, commitment_id, actor_user_id, event_type, details
+     ) VALUES ($1, $2, $3, $4, 'EDITED', '{}'::jsonb)`,
+    [randomUUID(), firstWorkspace.id, persistenceCommitments.sparseId, registrationResult.user.id],
+    '23503',
+    'Audit rows must not associate a workspace with another workspace commitment.',
+  );
+
   const firstWorkspaceCommitmentListResponse = await workspaceRequest(firstCommitmentsPath, {
     cookie,
   });
@@ -618,6 +656,16 @@ try {
     { method: 'PATCH', cookie, body: { commitmentText: 'Cross-workspace update' } },
   );
   assert.equal(crossWorkspaceCommitmentUpdate.status, 404);
+  const crossWorkspaceAuditRead = await workspaceRequest(
+    `/api/workspaces/${secondWorkspace.id}/commitments/${apiCommitment.id}/audit-events`,
+    { cookie },
+  );
+  assert.equal(crossWorkspaceAuditRead.status, 404);
+  const nonMemberAuditRead = await workspaceRequest(
+    `${firstCommitmentsPath}/${apiCommitment.id}/audit-events`,
+    { cookie: secondCookie },
+  );
+  assert.equal(nonMemberAuditRead.status, 404);
 
   const secondUserCannotReadCommitmentBeforeMembership = await workspaceRequest(
     `${firstCommitmentsPath}/${apiCommitment.id}`,
@@ -677,6 +725,24 @@ try {
   );
   assert.equal(invalidCommitmentOwner.status, 400);
 
+  const editAndDeadlineChange = await workspaceRequest(
+    `${firstCommitmentsPath}/${apiCommitment.id}`,
+    {
+      method: 'PATCH',
+      cookie,
+      body: {
+        commitmentText: 'Send the revised integration report.',
+        sourceExcerpt: 'Private source excerpt; do not duplicate into audit metadata.',
+        dueAt: '2026-11-02T09:30:00.000Z',
+        dueTimezone: 'Europe/Brussels',
+      },
+    },
+  );
+  assert.equal(editAndDeadlineChange.status, 200);
+  const editedCommitment = (await editAndDeadlineChange.json()).commitment;
+  assert.equal(editedCommitment.commitmentText, 'Send the revised integration report.');
+  assert.equal(editedCommitment.dueTimezone, 'Europe/Brussels');
+
   const openCommitment = await workspaceRequest(`${firstCommitmentsPath}/${apiCommitment.id}`, {
     method: 'PATCH',
     cookie: secondCookie,
@@ -713,19 +779,26 @@ try {
   assert.equal(missingCompletionSignal.status, 409);
   assert.equal((await missingCompletionSignal.json()).error, 'COMPLETION_SIGNAL_REQUIRED');
 
+  const evidencePatch = await workspaceRequest(`${firstCommitmentsPath}/${apiCommitment.id}`, {
+    method: 'PATCH',
+    cookie,
+    body: { completionEvidence: 'Counterparty confirmed delivery.' },
+  });
+  assert.equal(evidencePatch.status, 200);
+
   const completedCommitmentResponse = await workspaceRequest(
     `${firstCommitmentsPath}/${apiCommitment.id}`,
     {
       method: 'PATCH',
       cookie: secondCookie,
-      body: { status: 'COMPLETED', completionSignal: true },
+      body: { status: 'COMPLETED' },
     },
   );
   assert.equal(completedCommitmentResponse.status, 200);
   const completedCommitment = (await completedCommitmentResponse.json()).commitment;
   assert.equal(completedCommitment.status, 'COMPLETED');
   assert.ok(completedCommitment.completedAt, 'The lifecycle service should timestamp completion.');
-  assert.equal(completedCommitment.completionEvidence, null, 'The API must not invent evidence.');
+  assert.equal(completedCommitment.completionEvidence, 'Counterparty confirmed delivery.');
 
   const terminalCommitmentReopen = await workspaceRequest(
     `${firstCommitmentsPath}/${apiCommitment.id}`,
@@ -733,6 +806,184 @@ try {
   );
   assert.equal(terminalCommitmentReopen.status, 409);
   assert.equal((await terminalCommitmentReopen.json()).error, 'INVALID_TRANSITION');
+
+  const auditEventsPath = `${firstCommitmentsPath}/${apiCommitment.id}/audit-events`;
+  const invalidAuditEventLimit = await workspaceRequest(`${auditEventsPath}?limit=101`, { cookie });
+  assert.equal(invalidAuditEventLimit.status, 400);
+  const invalidAuditEventCursor = await workspaceRequest(`${auditEventsPath}?cursor=not-a-cursor`, {
+    cookie,
+  });
+  assert.equal(invalidAuditEventCursor.status, 400);
+
+  const auditEvents = [];
+  let auditCursor = null;
+  for (let pageNumber = 0; pageNumber < 10; pageNumber += 1) {
+    const cursorQuery = auditCursor ? `&cursor=${encodeURIComponent(auditCursor)}` : '';
+    const auditPageResponse = await workspaceRequest(`${auditEventsPath}?limit=3${cursorQuery}`, {
+      cookie,
+    });
+    assert.equal(auditPageResponse.status, 200);
+    const auditPage = await auditPageResponse.json();
+    assert.ok(auditPage.events.length <= 3);
+    auditEvents.push(...auditPage.events);
+    auditCursor = auditPage.nextCursor;
+    if (auditCursor === null) break;
+  }
+  assert.equal(new Set(auditEvents.map((event) => event.id)).size, auditEvents.length);
+  assert.ok(auditEvents.length > 3, 'Audit history should be paginated without dropping events.');
+  assert.ok(auditEvents.every((event) => event.workspaceId === firstWorkspace.id));
+  assert.ok(auditEvents.every((event) => event.commitmentId === apiCommitment.id));
+  assert.ok(
+    auditEvents.every((event) =>
+      [registrationResult.user.id, secondRegistrationResult.user.id].includes(event.actorUserId),
+    ),
+  );
+  const auditEventTypes = new Set(auditEvents.map((event) => event.eventType));
+  assert.equal(auditCursor, null, 'The audit cursor should reach the end of the history.');
+  for (const requiredType of [
+    'CREATED',
+    'EDITED',
+    'CONFIRMED',
+    'REASSIGNED',
+    'DEADLINE_CHANGED',
+    'STATUS_CHANGED',
+    'COMPLETION_EVIDENCE_RECORDED',
+    'COMPLETED',
+  ]) {
+    assert.ok(auditEventTypes.has(requiredType), `Expected an audit record for ${requiredType}.`);
+  }
+  assert.ok(!auditEventTypes.has('DISMISSED'));
+  const auditMetadata = JSON.stringify(auditEvents.map((event) => event.details));
+  assert.ok(
+    !auditMetadata.includes('Private source excerpt; do not duplicate into audit metadata.'),
+  );
+  assert.ok(!auditMetadata.includes('Counterparty confirmed delivery.'));
+  assert.ok(!auditMetadata.includes('Send the revised integration report.'));
+
+  const immutableAuditEventId = auditEvents[0].id;
+  await assert.rejects(
+    pool.query(
+      `UPDATE commitmentos.commitment_audit_event
+       SET details = details || '{"tampered": true}'::jsonb WHERE id = $1`,
+      [immutableAuditEventId],
+    ),
+    (error) => error.code === '55000',
+    'Audit events must reject updates.',
+  );
+  await assert.rejects(
+    pool.query('DELETE FROM commitmentos.commitment_audit_event WHERE id = $1', [
+      immutableAuditEventId,
+    ]),
+    (error) => error.code === '55000',
+    'Audit events must reject deletes.',
+  );
+  const truncateClient = await pool.connect();
+  try {
+    await truncateClient.query('BEGIN');
+    await assert.rejects(
+      truncateClient.query('TRUNCATE TABLE commitmentos.commitment_audit_event'),
+      (error) => error.code === '55000',
+      'Audit events must reject truncation.',
+    );
+  } finally {
+    await truncateClient.query('ROLLBACK');
+    truncateClient.release();
+  }
+  await assertDatabaseRejects(
+    'DELETE FROM commitmentos.commitment WHERE id = $1',
+    [apiCommitment.id],
+    '23503',
+    'Commitments with immutable audit history must not be deleted.',
+  );
+  await assertDatabaseRejects(
+    'DELETE FROM commitmentos.workspace WHERE id = $1',
+    [firstWorkspace.id],
+    '23503',
+    'Workspaces with immutable audit history must not be deleted.',
+  );
+  await assertDatabaseRejects(
+    'DELETE FROM commitmentos."user" WHERE id = $1',
+    [secondRegistrationResult.user.id],
+    '23503',
+    'Users attributed in immutable audit history must not be deleted.',
+  );
+
+  const rollbackCreateResponse = await workspaceRequest(firstCommitmentsPath, {
+    method: 'POST',
+    cookie,
+    body: {
+      commitmentText: 'Audit rollback check.',
+      normalizedAction: 'Verify atomic audit writes',
+    },
+  });
+  assert.equal(rollbackCreateResponse.status, 201);
+  const rollbackCommitmentId = (await rollbackCreateResponse.json()).commitment.id;
+  const triggerSuffix = randomUUID().replaceAll('-', '');
+  const rejectAuditFunction = `integration_reject_audit_${triggerSuffix}`;
+  const rejectAuditTrigger = `integration_reject_audit_${triggerSuffix}`;
+  try {
+    await pool.query(`
+      CREATE FUNCTION commitmentos."${rejectAuditFunction}"()
+      RETURNS trigger
+      LANGUAGE plpgsql
+      AS $audit$
+      BEGIN
+        IF NEW.event_type IN ('CREATED', 'EDITED') THEN
+          RAISE EXCEPTION 'simulated audit persistence failure' USING ERRCODE = '55000';
+        END IF;
+        RETURN NEW;
+      END;
+      $audit$
+    `);
+    await pool.query(`
+      CREATE TRIGGER "${rejectAuditTrigger}"
+      BEFORE INSERT ON commitmentos.commitment_audit_event
+      FOR EACH ROW EXECUTE FUNCTION commitmentos."${rejectAuditFunction}"()
+    `);
+
+    const failedAuditCreateText = 'Creation must roll back with the audit failure.';
+    const failedAuditCreateResponse = await workspaceRequest(firstCommitmentsPath, {
+      method: 'POST',
+      cookie,
+      body: { commitmentText: failedAuditCreateText, normalizedAction: 'Test create rollback' },
+    });
+    assert.equal(failedAuditCreateResponse.status, 500);
+    const failedAuditCreateCount = await pool.query(
+      `SELECT COUNT(*)::int AS count
+       FROM commitmentos.commitment
+       WHERE workspace_id = $1 AND created_by = $2 AND commitment_text = $3`,
+      [firstWorkspace.id, registrationResult.user.id, failedAuditCreateText],
+    );
+    assert.equal(failedAuditCreateCount.rows[0].count, 0);
+
+    const auditFailureResponse = await workspaceRequest(
+      `${firstCommitmentsPath}/${rollbackCommitmentId}`,
+      {
+        method: 'PATCH',
+        cookie,
+        body: { commitmentText: 'This edit must roll back with the audit failure.' },
+      },
+    );
+    assert.equal(auditFailureResponse.status, 500);
+    const rolledBackCommitment = await pool.query(
+      'SELECT commitment_text FROM commitmentos.commitment WHERE id = $1',
+      [rollbackCommitmentId],
+    );
+    assert.equal(rolledBackCommitment.rows[0].commitment_text, 'Audit rollback check.');
+    const rolledBackAuditEvents = await pool.query(
+      `SELECT event_type FROM commitmentos.commitment_audit_event WHERE commitment_id = $1`,
+      [rollbackCommitmentId],
+    );
+    assert.deepEqual(
+      rolledBackAuditEvents.rows.map((event) => event.event_type),
+      ['CREATED'],
+    );
+  } finally {
+    await pool.query(
+      `DROP TRIGGER IF EXISTS "${rejectAuditTrigger}" ON commitmentos.commitment_audit_event`,
+    );
+    await pool.query(`DROP FUNCTION IF EXISTS commitmentos."${rejectAuditFunction}"()`);
+  }
 
   const raceCreateResponse = await workspaceRequest(firstCommitmentsPath, {
     method: 'POST',
@@ -1006,12 +1257,39 @@ try {
   console.log('Authentication, workspace, and commitment integration checks passed.');
 } finally {
   await cleanupServer();
+  const cleanupClient = await pool.connect();
   try {
-    await pool.query('DELETE FROM commitmentos.workspace WHERE id = ANY($1::text[])', [
+    await cleanupClient.query('BEGIN');
+    // The test database contains only disposable fixtures; preserve production immutability rules.
+    await cleanupClient.query(
+      'ALTER TABLE commitmentos.commitment_audit_event DISABLE TRIGGER USER',
+    );
+    await cleanupClient.query(
+      `DELETE FROM commitmentos.commitment_audit_event
+       WHERE workspace_id = ANY($1::text[])
+          OR actor_user_id IN (
+            SELECT id FROM commitmentos."user" WHERE email = ANY($2::text[])
+          )`,
+      [workspaceIds, testEmails],
+    );
+    await cleanupClient.query(
+      'ALTER TABLE commitmentos.commitment_audit_event ENABLE TRIGGER USER',
+    );
+    await cleanupClient.query('DELETE FROM commitmentos.workspace WHERE id = ANY($1::text[])', [
       workspaceIds,
     ]);
-    await pool.query('DELETE FROM commitmentos."user" WHERE email = ANY($1::text[])', [testEmails]);
+    await cleanupClient.query('DELETE FROM commitmentos."user" WHERE email = ANY($1::text[])', [
+      testEmails,
+    ]);
+    await cleanupClient.query('COMMIT');
+  } catch (error) {
+    await cleanupClient.query('ROLLBACK').catch((rollbackError) => {
+      console.error('Integration fixture cleanup rollback failed.', rollbackError);
+    });
+    console.error('Integration fixture cleanup failed.', error);
+    process.exitCode = 1;
   } finally {
+    cleanupClient.release();
     await pool.end();
   }
 }
