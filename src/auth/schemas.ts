@@ -12,6 +12,7 @@ export const registrationSchema = z
     name: z.string().trim().min(1).max(80),
     email: emailSchema,
     password: z.string().min(12).max(128),
+    callbackURL: z.literal('/login?verified=1').optional(),
   })
   .strict();
 

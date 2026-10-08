@@ -16,6 +16,21 @@ describe('authentication input schemas', () => {
     });
   });
 
+  it('allows only the fixed same-origin verification callback', () => {
+    const registration = {
+      name: 'Alex',
+      email: 'alex@example.com',
+      password: 'a-long-enough-test-password',
+    };
+    expect(
+      registrationSchema.safeParse({ ...registration, callbackURL: '/login?verified=1' }).success,
+    ).toBe(true);
+    expect(
+      registrationSchema.safeParse({ ...registration, callbackURL: 'https://attacker.test' })
+        .success,
+    ).toBe(false);
+  });
+
   it('rejects short passwords, oversized names, and unknown fields', () => {
     expect(
       registrationSchema.safeParse({
