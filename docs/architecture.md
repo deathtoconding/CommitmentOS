@@ -11,11 +11,11 @@ Browser
 Next.js application
   │
   ├── Auth UI and Better Auth route handler
-  ├── authentication/domain modules
+  ├── workspace APIs with membership-scoped queries
   └── Drizzle database adapter
 
 PostgreSQL
-  └── commitmentos schema (auth tables now; workspace/product tables later)
+  └── commitmentos schema (auth, workspace, and membership tables; product tables later)
 ```
 
 ## Boundaries

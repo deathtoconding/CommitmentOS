@@ -1,4 +1,4 @@
-import { index, pgSchema, text, timestamp, boolean } from 'drizzle-orm/pg-core';
+import { boolean, index, pgSchema, text, timestamp, unique } from 'drizzle-orm/pg-core';
 
 /** Database namespace reserved for CommitmentOS application tables. */
 export const commitmentosSchema = pgSchema('commitmentos');
@@ -63,4 +63,31 @@ export const verification = commitmentosSchema.table(
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },
   (table) => [index('verification_identifier_idx').on(table.identifier)],
+);
+
+export const workspaceRole = commitmentosSchema.enum('workspace_role', ['OWNER', 'MEMBER']);
+
+export const workspace = commitmentosSchema.table('workspace', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
+export const workspaceMember = commitmentosSchema.table(
+  'workspace_member',
+  {
+    id: text('id').primaryKey(),
+    workspaceId: text('workspace_id')
+      .notNull()
+      .references(() => workspace.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    role: workspaceRole('role').default('MEMBER').notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (table) => [
+    unique('workspace_member_workspace_user_unique').on(table.workspaceId, table.userId),
+    index('workspace_member_user_id_idx').on(table.userId),
+  ],
 );

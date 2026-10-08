@@ -12,14 +12,17 @@ const databaseUrl = process.env.DATABASE_URL;
 const authSecret = process.env.BETTER_AUTH_SECRET;
 
 if (!databaseUrl || !authSecret) {
-  throw new Error('Set DATABASE_URL and BETTER_AUTH_SECRET before running auth integration tests.');
+  throw new Error('Set DATABASE_URL and BETTER_AUTH_SECRET before running integration tests.');
 }
 
 const email = `commitmentos.test+${randomUUID()}@example.com`;
+const secondEmail = `commitmentos.test+${randomUUID()}@example.com`;
+const testEmails = [email, secondEmail];
 const password = 'CommitmentOS-Test-Password-2026!';
+const workspaceIds = [];
 const pool = new Pool({
   connectionString: databaseUrl,
-  application_name: 'commitmentos-auth-test',
+  application_name: 'commitmentos-integration-test',
 });
 let server;
 let serverOutput = '';
@@ -77,6 +80,19 @@ function authRequest(path, body, cookie) {
       ...(cookie ? { cookie } : {}),
     },
     body: JSON.stringify(body),
+    redirect: 'manual',
+  });
+}
+
+function workspaceRequest(path, { method = 'GET', cookie, body } = {}) {
+  return fetch(`${baseURL}${path}`, {
+    method,
+    headers: {
+      origin: baseURL,
+      ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+      ...(cookie ? { cookie } : {}),
+    },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     redirect: 'manual',
   });
 }
@@ -192,6 +208,158 @@ try {
     new RegExp(email.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
   );
 
+  const anonymousWorkspaceList = await workspaceRequest('/api/workspaces');
+  assert.equal(anonymousWorkspaceList.status, 401, 'Workspace APIs must require authentication.');
+  const anonymousWorkspaceCreate = await workspaceRequest('/api/workspaces', {
+    method: 'POST',
+    body: { name: 'Unauthenticated workspace' },
+  });
+  assert.equal(anonymousWorkspaceCreate.status, 401);
+
+  const blankWorkspaceName = await workspaceRequest('/api/workspaces', {
+    method: 'POST',
+    cookie,
+    body: { name: '   ' },
+  });
+  assert.equal(blankWorkspaceName.status, 400, 'Blank workspace names must be rejected.');
+
+  const attemptedOwnerOverride = await workspaceRequest('/api/workspaces', {
+    method: 'POST',
+    cookie,
+    body: { name: 'Overposted workspace', userId: registrationResult.user.id, role: 'OWNER' },
+  });
+  assert.equal(attemptedOwnerOverride.status, 400, 'Clients must not choose workspace ownership.');
+
+  const firstWorkspaceResponse = await workspaceRequest('/api/workspaces', {
+    method: 'POST',
+    cookie,
+    body: { name: '  Product Team  ' },
+  });
+  assert.equal(firstWorkspaceResponse.status, 201, 'Authenticated users should create workspaces.');
+  const firstWorkspaceResult = await firstWorkspaceResponse.json();
+  const firstWorkspace = firstWorkspaceResult.workspace;
+  workspaceIds.push(firstWorkspace.id);
+  assert.equal(firstWorkspace.name, 'Product Team', 'Workspace names should be trimmed.');
+  assert.equal(firstWorkspace.role, 'OWNER', 'Workspace creators must become owners.');
+
+  const ownerMembership = await pool.query(
+    `SELECT role
+     FROM commitmentos.workspace_member
+     WHERE workspace_id = $1 AND user_id = $2`,
+    [firstWorkspace.id, registrationResult.user.id],
+  );
+  assert.equal(ownerMembership.rows[0]?.role, 'OWNER');
+
+  await assert.rejects(
+    pool.query(
+      `INSERT INTO commitmentos.workspace_member (id, workspace_id, user_id, role)
+       VALUES ($1, $2, $3, $4)`,
+      [randomUUID(), firstWorkspace.id, registrationResult.user.id, 'OWNER'],
+    ),
+    (error) => error.code === '23505',
+    'The database must prevent duplicate user/workspace memberships.',
+  );
+  await assert.rejects(
+    pool.query(
+      `INSERT INTO commitmentos.workspace_member (id, workspace_id, user_id, role)
+       VALUES ($1, $2, $3, $4)`,
+      [randomUUID(), randomUUID(), registrationResult.user.id, 'MEMBER'],
+    ),
+    (error) => error.code === '23503',
+    'Membership rows must reference an existing workspace.',
+  );
+  await assert.rejects(
+    pool.query(
+      `INSERT INTO commitmentos.workspace_member (id, workspace_id, user_id, role)
+       VALUES ($1, $2, $3, $4)`,
+      [randomUUID(), firstWorkspace.id, randomUUID(), 'MEMBER'],
+    ),
+    (error) => error.code === '23503',
+    'Membership rows must reference an existing user.',
+  );
+
+  const anonymousWorkspaceDetails = await workspaceRequest(`/api/workspaces/${firstWorkspace.id}`);
+  assert.equal(anonymousWorkspaceDetails.status, 401);
+
+  const firstWorkspaceListResponse = await workspaceRequest('/api/workspaces', { cookie });
+  assert.equal(firstWorkspaceListResponse.status, 200);
+  const firstWorkspaceList = await firstWorkspaceListResponse.json();
+  assert.deepEqual(
+    firstWorkspaceList.workspaces.map((item) => item.id),
+    [firstWorkspace.id],
+    'Users should list only workspaces where they are members.',
+  );
+
+  const firstWorkspaceDetails = await workspaceRequest(`/api/workspaces/${firstWorkspace.id}`, {
+    cookie,
+  });
+  assert.equal(firstWorkspaceDetails.status, 200);
+  assert.equal((await firstWorkspaceDetails.json()).workspace.id, firstWorkspace.id);
+
+  const secondWorkspaceResponse = await workspaceRequest('/api/workspaces', {
+    method: 'POST',
+    cookie,
+    body: { name: 'Operations' },
+  });
+  assert.equal(secondWorkspaceResponse.status, 201);
+  const secondWorkspace = (await secondWorkspaceResponse.json()).workspace;
+  workspaceIds.push(secondWorkspace.id);
+  assert.equal(secondWorkspace.role, 'OWNER');
+
+  const secondRegistration = await authRequest('sign-up/email', {
+    name: 'Second Integration User',
+    email: secondEmail,
+    password,
+  });
+  assert.ok(secondRegistration.ok, 'A second user should register for isolation checks.');
+  const secondRegistrationResult = await secondRegistration.json();
+  assert.equal(secondRegistrationResult.user.email, secondEmail);
+  const secondLogin = await authRequest('sign-in/email', { email: secondEmail, password });
+  assert.ok(secondLogin.ok, 'The second user should be able to sign in.');
+  const secondCookie = readCookieHeader(secondLogin);
+
+  const emptySecondUserList = await workspaceRequest('/api/workspaces', { cookie: secondCookie });
+  assert.equal(emptySecondUserList.status, 200);
+  assert.deepEqual((await emptySecondUserList.json()).workspaces, []);
+
+  const thirdWorkspaceResponse = await workspaceRequest('/api/workspaces', {
+    method: 'POST',
+    cookie: secondCookie,
+    body: { name: 'Customer Success' },
+  });
+  assert.equal(thirdWorkspaceResponse.status, 201);
+  const thirdWorkspace = (await thirdWorkspaceResponse.json()).workspace;
+  workspaceIds.push(thirdWorkspace.id);
+  assert.equal(thirdWorkspace.role, 'OWNER');
+
+  const finalFirstUserList = await workspaceRequest('/api/workspaces', { cookie });
+  const firstUserWorkspaceIds = (await finalFirstUserList.json()).workspaces.map((item) => item.id);
+  assert.deepEqual(
+    new Set(firstUserWorkspaceIds),
+    new Set([firstWorkspace.id, secondWorkspace.id]),
+  );
+
+  const finalSecondUserList = await workspaceRequest('/api/workspaces', { cookie: secondCookie });
+  const secondUserWorkspaceIds = (await finalSecondUserList.json()).workspaces.map(
+    (item) => item.id,
+  );
+  assert.deepEqual(secondUserWorkspaceIds, [thirdWorkspace.id]);
+
+  const secondUserCannotReadFirstWorkspace = await workspaceRequest(
+    `/api/workspaces/${firstWorkspace.id}`,
+    { cookie: secondCookie },
+  );
+  assert.equal(
+    secondUserCannotReadFirstWorkspace.status,
+    404,
+    'Non-members must not be able to access another workspace.',
+  );
+  const firstUserCannotReadThirdWorkspace = await workspaceRequest(
+    `/api/workspaces/${thirdWorkspace.id}`,
+    { cookie },
+  );
+  assert.equal(firstUserCannotReadThirdWorkspace.status, 404);
+
   const logout = await authRequest('sign-out', {}, cookie);
   assert.ok(logout.ok, 'Logout should complete successfully.');
 
@@ -200,6 +368,12 @@ try {
     redirect: 'manual',
   });
   assert.equal(invalidatedPage.status, 307, 'A logged-out session must no longer access /app.');
+  const invalidatedWorkspaceList = await workspaceRequest('/api/workspaces', { cookie });
+  assert.equal(
+    invalidatedWorkspaceList.status,
+    401,
+    'Logout must revoke workspace API access too.',
+  );
 
   const remainingSessions = await pool.query(
     `SELECT COUNT(*)::int AS count
@@ -209,11 +383,14 @@ try {
   );
   assert.equal(remainingSessions.rows[0].count, 0, 'Logout must invalidate the database session.');
 
-  console.log('Authentication integration checks passed.');
+  console.log('Authentication and workspace integration checks passed.');
 } finally {
   await cleanupServer();
   try {
-    await pool.query('DELETE FROM commitmentos."user" WHERE email = $1', [email]);
+    await pool.query('DELETE FROM commitmentos.workspace WHERE id = ANY($1::text[])', [
+      workspaceIds,
+    ]);
+    await pool.query('DELETE FROM commitmentos."user" WHERE email = ANY($1::text[])', [testEmails]);
   } finally {
     await pool.end();
   }

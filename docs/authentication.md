@@ -18,9 +18,9 @@ Do not log, commit, or expose the auth secret, passwords, session cookies, or da
 - `/api/auth/[...all]`: Better Auth API, with server-side Zod validation on email/password endpoints.
 - `/app`: protected server-rendered route; reads the authoritative database-backed session and redirects to `/login` when absent or revoked.
 
-Authentication answers **who is the user?** It does not assign workspaces, membership, roles, or permissions. Those are deferred to COM-105/106.
+Authentication answers **who is the user?** Workspace membership and tenant context are implemented separately in COM-105; broader authorization policy is deferred to COM-106. See [workspace behavior](workspaces.md).
 
 ## Test strategy
 
 - `npm test`: fast unit tests for auth environment and Zod schemas.
-- `npm run test:integration`: requires a migrated PostgreSQL database and a production build; launches a local Next server and checks registration, duplicate registration, valid/invalid login, authenticated/unauthenticated `/app`, logout, session invalidation, and password hashing.
+- `npm run test:integration`: requires a migrated PostgreSQL database and a production build; launches a local Next server and checks registration, duplicate registration, valid/invalid login, authenticated/unauthenticated `/app`, logout, session invalidation, password hashing, and the COM-105 workspace membership and tenant-isolation APIs.
