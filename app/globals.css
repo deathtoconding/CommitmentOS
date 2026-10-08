@@ -7,9 +7,11 @@
   --ink: #1e293b;
   --muted: #64748b;
   --accent: #27675b;
-  --accent-soft: #e6f1ed;
+  --accent-hover: #1f5148;
   --surface: #ffffff;
   --background: #f4f7f6;
+  --border: #dce5e1;
+  --danger: #a33434;
 }
 
 html,
@@ -25,20 +27,31 @@ body {
   font-family: Arial, Helvetica, sans-serif;
 }
 
-.page-shell {
+a {
+  color: var(--accent);
+}
+
+.page-shell,
+.auth-shell {
   display: grid;
   min-height: 100vh;
   place-items: center;
   padding: 2rem;
 }
 
-.foundation-card {
+.foundation-card,
+.auth-card {
   width: min(100%, 42rem);
   padding: clamp(2rem, 7vw, 4.5rem);
   border: 1px solid #e4ebe8;
   border-radius: 1.5rem;
   background: var(--surface);
   box-shadow: 0 24px 80px rgb(35 66 57 / 8%);
+}
+
+.auth-card {
+  width: min(100%, 30rem);
+  padding: clamp(1.75rem, 6vw, 3rem);
 }
 
 .brand-mark {
@@ -70,12 +83,179 @@ h1 {
   line-height: 1.02;
 }
 
-.intro {
+.auth-card h1 {
+  font-size: clamp(2rem, 6vw, 2.6rem);
+}
+
+.intro,
+.auth-intro {
   max-width: 35rem;
   margin: 1.25rem 0 0;
   color: var(--muted);
   font-size: 1.05rem;
   line-height: 1.7;
+}
+
+.auth-intro {
+  font-size: 0.95rem;
+}
+
+.home-actions {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  margin-top: 2rem;
+}
+
+.primary-button,
+.secondary-button {
+  display: inline-flex;
+  min-height: 2.9rem;
+  align-items: center;
+  justify-content: center;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--accent);
+  border-radius: 0.7rem;
+  background: var(--accent);
+  color: white;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.95rem;
+  font-weight: 700;
+  text-decoration: none;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    opacity 120ms ease;
+}
+
+.primary-button:hover,
+.secondary-button:hover {
+  border-color: var(--accent-hover);
+  background: var(--accent-hover);
+  color: white;
+}
+
+.primary-button:focus-visible,
+.secondary-button:focus-visible,
+.auth-form input:focus-visible,
+a:focus-visible {
+  outline: 3px solid rgb(39 103 91 / 28%);
+  outline-offset: 2px;
+}
+
+.primary-button:disabled,
+.secondary-button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.button-link {
+  width: fit-content;
+}
+
+.text-link {
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.auth-form {
+  display: grid;
+  gap: 1.1rem;
+  margin-top: 1.8rem;
+}
+
+.field-label {
+  display: grid;
+  gap: 0.5rem;
+  color: var(--ink);
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.auth-form input {
+  width: 100%;
+  min-height: 2.9rem;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 0.65rem;
+  background: white;
+  color: var(--ink);
+  font: inherit;
+  font-size: 1rem;
+}
+
+.auth-form input:focus {
+  border-color: var(--accent);
+}
+
+.field-hint {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 400;
+}
+
+.form-message {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.form-message-error {
+  color: var(--danger);
+}
+
+.form-message-success {
+  color: var(--accent);
+}
+
+.auth-switch {
+  margin: 1.5rem 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.auth-switch a {
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.back-link {
+  position: fixed;
+  bottom: 1.25rem;
+  left: 50%;
+  color: var(--muted);
+  font-size: 0.85rem;
+  text-decoration: none;
+  transform: translateX(-50%);
+}
+
+.app-card .intro {
+  margin-bottom: 0;
+}
+
+.account-email {
+  margin: 1.1rem 0 1.75rem;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.logout-actions {
+  display: grid;
+  justify-items: start;
+  gap: 0.75rem;
+}
+
+.secondary-button {
+  border-color: var(--border);
+  background: white;
+  color: var(--ink);
+}
+
+.secondary-button:hover {
+  border-color: var(--accent);
+  background: #f2f7f5;
+  color: var(--accent);
 }
 
 .status-pill {
@@ -100,11 +280,20 @@ h1 {
 }
 
 @media (max-width: 36rem) {
-  .page-shell {
+  .page-shell,
+  .auth-shell {
     padding: 1rem;
   }
 
-  .foundation-card {
+  .foundation-card,
+  .auth-card {
     border-radius: 1.15rem;
+  }
+
+  .back-link {
+    position: static;
+    justify-self: center;
+    margin-top: 1rem;
+    transform: none;
   }
 }

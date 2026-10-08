@@ -25,4 +25,4 @@ The application-owned tables will live in a dedicated PostgreSQL schema named `c
 - One application can be developed and deployed as a unit while preserving domain boundaries.
 - PostgreSQL migrations are explicit and reviewable.
 - Local database-backed development requires Docker Compose or another PostgreSQL instance.
-- Authentication, product tables, queues, and external integrations remain separate follow-on increments.
+- Authentication was intentionally deferred from this foundation decision and is now implemented separately in [ADR-0002](0002-authentication.md). Workspace/product tables, queues, and external integrations remain follow-on increments.

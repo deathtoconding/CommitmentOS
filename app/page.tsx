@@ -1,3 +1,5 @@
+import Link from 'next/link';
+
 export default function HomePage() {
   return (
     <main className="page-shell">
@@ -5,15 +7,18 @@ export default function HomePage() {
         <div className="brand-mark" aria-hidden="true">
           C
         </div>
-        <p className="eyebrow">CommitmentOS · MVP foundation</p>
+        <p className="eyebrow">CommitmentOS</p>
         <h1 id="page-title">Make good on every promise.</h1>
         <p className="intro">
-          The application foundation is ready. Commitment workflows will be added in small, testable
-          increments.
+          A clear view of what your team promised, who owns it, and what needs attention next.
         </p>
-        <div className="status-pill">
-          <span className="status-dot" aria-hidden="true" />
-          Development environment is running
+        <div className="home-actions">
+          <Link className="primary-button button-link" href="/signup">
+            Create an account
+          </Link>
+          <Link className="text-link" href="/login">
+            Sign in
+          </Link>
         </div>
       </section>
     </main>

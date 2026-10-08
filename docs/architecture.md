@@ -10,12 +10,12 @@ Browser
   ▼
 Next.js application
   │
-  ├── UI / route handlers (added in later increments)
-  ├── domain modules (added in later increments)
-  └── PostgreSQL adapter (configured; no product tables yet)
+  ├── Auth UI and Better Auth route handler
+  ├── authentication/domain modules
+  └── Drizzle database adapter
 
 PostgreSQL
-  └── commitmentos schema
+  └── commitmentos schema (auth tables now; workspace/product tables later)
 ```
 
 ## Boundaries
