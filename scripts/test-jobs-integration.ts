@@ -236,9 +236,16 @@ try {
         ? error.name
         : 'unknown';
   const message = error instanceof Error ? error.message : 'Unknown integration test failure.';
+  const causeMessage =
+    error instanceof Error && error.cause instanceof Error
+      ? `; caused by ${error.cause.name}: ${error.cause.message}`
+      : '';
   const safeMessage = [databaseUrl, environment.redisUrl]
     .filter(Boolean)
-    .reduce((result, secret) => result.replaceAll(secret, '[redacted]'), message);
+    .reduce(
+      (result, secret) => result.replaceAll(secret, '[redacted]'),
+      `${message}${causeMessage}`,
+    );
   const diagnostic = `Background jobs integration checks failed (${code}): ${safeMessage}`;
   console.error(diagnostic);
   const escapedDiagnostic = diagnostic
