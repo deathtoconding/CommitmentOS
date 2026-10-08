@@ -347,17 +347,27 @@ async function testIdempotentTenantScopedPersistence(): Promise<void> {
   }
 }
 
+let integrationStage = 'legacy migration fixture';
 try {
   await testLegacyReferenceMigration();
+  integrationStage = 'tenant-scoped persistence and commitment association';
   await testIdempotentTenantScopedPersistence();
   console.log(
     'PostgreSQL source-message integration checks passed: legacy migration, provider/account identity, concurrent deduplication, retry-safe metadata, tenant isolation, and commitment association.',
   );
 } catch (error) {
   const name = error instanceof Error ? error.name : 'UnknownError';
-  const message =
-    error instanceof Error ? error.message : 'Unknown source-message integration failure.';
-  console.error(`Source-message integration checks failed (${name}): ${message}`);
+  const details =
+    error instanceof Error
+      ? (error.stack ?? error.message)
+      : 'Unknown source-message integration failure.';
+  const diagnostic = `${integrationStage}: ${name}: ${details}`;
+  console.error(`Source-message integration checks failed: ${diagnostic}`);
+  const annotation = diagnostic
+    .replaceAll('%', '%25')
+    .replaceAll('\r', '%0D')
+    .replaceAll('\n', '%0A');
+  console.log(`::error title=Source-message integration failure::${annotation}`);
   process.exitCode = 1;
 } finally {
   const cleanupClient = await pool.connect();
