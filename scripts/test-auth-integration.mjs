@@ -479,7 +479,15 @@ try {
     password,
     callbackURL: '/login?verified=1',
   });
-  assert.ok(registration.ok, 'A new account should register successfully.');
+  if (!registration.ok) {
+    const responseBody = await registration.json().catch(() => ({}));
+    const safeServerOutput = [authSecret, smtpPassword]
+      .filter(Boolean)
+      .reduce((output, secret) => output.replaceAll(secret, '[redacted]'), serverOutput);
+    throw new Error(
+      `A new account should register successfully (HTTP ${registration.status}, ${responseBody.code ?? 'unknown'}). ${safeServerOutput}`,
+    );
+  }
   const registrationResult = await registration.json();
   assert.equal(registrationResult.user.email, email);
   assert.equal(registrationResult.user.emailVerified, false);
