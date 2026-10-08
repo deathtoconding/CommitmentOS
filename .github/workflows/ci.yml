@@ -49,6 +49,7 @@ jobs:
       SMTP_PASSWORD: commitmentos-ci-smtp-password
       EMAIL_FROM: noreply@commitmentos.test
       REDIS_URL: redis://localhost:6379
+      JOBS_METRICS_TOKEN: commitmentos-ci-metrics-token-do-not-use-in-production
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

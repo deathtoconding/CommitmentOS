@@ -3,6 +3,17 @@ import { z } from 'zod';
 export const JOB_KINDS = ['PLATFORM_PROBE'] as const;
 export type JobKind = (typeof JOB_KINDS)[number];
 
+export const JOB_STATUSES = [
+  'PENDING',
+  'QUEUED',
+  'RUNNING',
+  'RETRYING',
+  'SUCCEEDED',
+  'DEAD_LETTER',
+  'CANCELLED',
+] as const;
+export type JobStatus = (typeof JOB_STATUSES)[number];
+
 export const JOB_FAILURE_CLASSES = [
   'TRANSIENT',
   'RATE_LIMITED',

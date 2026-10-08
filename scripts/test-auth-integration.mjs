@@ -810,6 +810,32 @@ try {
   startServer();
   await waitForServer();
 
+  const metricsUrl = `${baseURL}/api/internal/metrics`;
+  const metricsToken = process.env.JOBS_METRICS_TOKEN;
+  const unauthorizedMetrics = await fetch(metricsUrl);
+  if (metricsToken) {
+    assert.equal(unauthorizedMetrics.status, 401);
+    assert.match(unauthorizedMetrics.headers.get('cache-control') ?? '', /no-store/i);
+    const invalidMetricsToken = await fetch(metricsUrl, {
+      headers: { authorization: `Bearer ${metricsToken}x` },
+    });
+    assert.equal(invalidMetricsToken.status, 401);
+
+    const authorizedMetrics = await fetch(metricsUrl, {
+      headers: { authorization: `Bearer ${metricsToken}` },
+    });
+    assert.equal(authorizedMetrics.status, 200);
+    assert.match(authorizedMetrics.headers.get('content-type') ?? '', /text\/plain/);
+    assert.match(authorizedMetrics.headers.get('cache-control') ?? '', /no-store/i);
+    const metricsBody = await authorizedMetrics.text();
+    assert.match(metricsBody, /commitmentos_jobs_total\{status="PENDING"\} \d+/);
+    assert.match(metricsBody, /commitmentos_ready_workers \d+/);
+    assert.doesNotMatch(metricsBody, /workspace_id|correlation_id|job_id|payload|secret/i);
+    assert.ok(!metricsBody.includes(metricsToken));
+  } else {
+    assert.equal(unauthorizedMetrics.status, 404, 'Metrics must be disabled without a token.');
+  }
+
   const anonymousPage = await fetch(`${baseURL}/app`, { redirect: 'manual' });
   assert.equal(
     anonymousPage.status,

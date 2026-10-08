@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm';
 import { COMMITMENT_AUDIT_EVENT_TYPES } from '../../commitments/audit-model';
 import { COMMITMENT_STATUSES } from '../../commitments/model';
+import { JOB_STATUSES } from '../../jobs/model';
 import { WORKSPACE_AUDIT_EVENT_TYPES } from '../../workspaces/audit-model';
 import { SOURCE_MESSAGE_PROVIDERS } from '../../source-messages/model';
 import {
@@ -333,15 +334,7 @@ export const commitmentAuditEvent = commitmentosSchema.table(
   ],
 );
 
-export const asyncJobStatus = commitmentosSchema.enum('async_job_status', [
-  'PENDING',
-  'QUEUED',
-  'RUNNING',
-  'RETRYING',
-  'SUCCEEDED',
-  'DEAD_LETTER',
-  'CANCELLED',
-]);
+export const asyncJobStatus = commitmentosSchema.enum('async_job_status', JOB_STATUSES);
 
 export const asyncJobFailureClass = commitmentosSchema.enum('async_job_failure_class', [
   'TRANSIENT',
