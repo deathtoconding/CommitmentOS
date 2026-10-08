@@ -413,6 +413,17 @@ try {
     200,
     'An authenticated user should be able to access /app.',
   );
+  assert.equal(authenticatedPage.headers.get('x-content-type-options'), 'nosniff');
+  assert.equal(authenticatedPage.headers.get('x-frame-options'), 'DENY');
+  assert.equal(authenticatedPage.headers.get('referrer-policy'), 'strict-origin-when-cross-origin');
+  assert.equal(
+    authenticatedPage.headers.get('permissions-policy'),
+    'camera=(), microphone=(), geolocation=()',
+  );
+  assert.match(
+    authenticatedPage.headers.get('strict-transport-security') ?? '',
+    /max-age=31536000/,
+  );
   const initialAppBody = await authenticatedPage.text();
   assert.match(initialAppBody, new RegExp(email.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   assert.match(initialAppBody, /No workspace available/);
@@ -915,12 +926,53 @@ try {
   assert.equal(openCommitment.status, 200);
   assert.equal((await openCommitment.json()).commitment.status, 'OPEN');
 
-  const repeatedCommitmentStatus = await workspaceRequest(
-    `${firstCommitmentsPath}/${apiCommitment.id}`,
-    { method: 'PATCH', cookie, body: { status: 'OPEN' } },
-  );
+  const updateCommitmentStatus = (status) =>
+    workspaceRequest(`${firstCommitmentsPath}/${apiCommitment.id}`, {
+      method: 'PATCH',
+      cookie,
+      body: { status },
+    });
+
+  const repeatedCommitmentStatus = await updateCommitmentStatus('OPEN');
   assert.equal(repeatedCommitmentStatus.status, 409);
   assert.equal((await repeatedCommitmentStatus.json()).error, 'INVALID_TRANSITION');
+
+  const dueSoonCommitment = await updateCommitmentStatus('DUE_SOON');
+  assert.equal(dueSoonCommitment.status, 200);
+  const dueSoonCannotReopen = await updateCommitmentStatus('OPEN');
+  assert.equal(dueSoonCannotReopen.status, 409);
+  assert.equal((await dueSoonCannotReopen.json()).error, 'INVALID_TRANSITION');
+
+  const waitingCommitment = await updateCommitmentStatus('WAITING');
+  assert.equal(waitingCommitment.status, 200);
+  const waitingCannotBecomeBlocked = await updateCommitmentStatus('BLOCKED');
+  assert.equal(waitingCannotBecomeBlocked.status, 409);
+  assert.equal((await waitingCannotBecomeBlocked.json()).error, 'INVALID_TRANSITION');
+
+  const reopenedWaitingCommitment = await updateCommitmentStatus('OPEN');
+  assert.equal(reopenedWaitingCommitment.status, 200);
+  const blockedCommitment = await updateCommitmentStatus('BLOCKED');
+  assert.equal(blockedCommitment.status, 200);
+  const blockedCannotBecomeWaiting = await updateCommitmentStatus('WAITING');
+  assert.equal(blockedCannotBecomeWaiting.status, 409);
+  assert.equal((await blockedCannotBecomeWaiting.json()).error, 'INVALID_TRANSITION');
+
+  const overdueCommitment = await updateCommitmentStatus('OVERDUE');
+  assert.equal(overdueCommitment.status, 200);
+  for (const forbiddenOverdueTarget of ['OPEN', 'DUE_SOON', 'WAITING', 'BLOCKED']) {
+    const rejectedTransition = await updateCommitmentStatus(forbiddenOverdueTarget);
+    assert.equal(rejectedTransition.status, 409);
+    assert.equal(
+      (await rejectedTransition.json()).error,
+      'INVALID_TRANSITION',
+      `OVERDUE -> ${forbiddenOverdueTarget} must be rejected by the API.`,
+    );
+  }
+  const stillOverdue = await workspaceRequest(`${firstCommitmentsPath}/${apiCommitment.id}`, {
+    cookie,
+  });
+  assert.equal(stillOverdue.status, 200);
+  assert.equal((await stillOverdue.json()).commitment.status, 'OVERDUE');
 
   const newEvidenceCannotReplaceAnExplicitSignal = await workspaceRequest(
     `${firstCommitmentsPath}/${apiCommitment.id}`,

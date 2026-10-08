@@ -23,10 +23,10 @@ The PostgreSQL enum contains `DETECTED`, `OPEN`, `DUE_SOON`, `WAITING`, `BLOCKED
 | -------------- | --------------------------------------------------------------------- |
 | `DETECTED`     | `OPEN`, `DISMISSED`                                                   |
 | `OPEN`         | `DUE_SOON`, `WAITING`, `BLOCKED`, `OVERDUE`, `COMPLETED`, `DISMISSED` |
-| `DUE_SOON`     | `OPEN`, `WAITING`, `BLOCKED`, `OVERDUE`, `COMPLETED`, `DISMISSED`     |
-| `WAITING`      | `OPEN`, `DUE_SOON`, `BLOCKED`, `OVERDUE`, `COMPLETED`, `DISMISSED`    |
-| `BLOCKED`      | `OPEN`, `DUE_SOON`, `WAITING`, `OVERDUE`, `COMPLETED`, `DISMISSED`    |
-| `OVERDUE`      | `OPEN`, `DUE_SOON`, `WAITING`, `BLOCKED`, `COMPLETED`, `DISMISSED`    |
+| `DUE_SOON`     | `WAITING`, `BLOCKED`, `OVERDUE`, `COMPLETED`, `DISMISSED`             |
+| `WAITING`      | `OPEN`, `DUE_SOON`, `OVERDUE`, `COMPLETED`, `DISMISSED`               |
+| `BLOCKED`      | `OPEN`, `DUE_SOON`, `OVERDUE`, `COMPLETED`, `DISMISSED`               |
+| `OVERDUE`      | `COMPLETED`, `DISMISSED`                                              |
 | `COMPLETED`    | None (terminal)                                                       |
 | `DISMISSED`    | None (terminal)                                                       |
 

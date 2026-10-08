@@ -2,7 +2,7 @@
 
 CommitmentOS turns business conversations into tracked commitments so teams can follow through on what they promised.
 
-This repository is being built in dependency-ordered increments. The current implementation establishes the application runtime, quality gates, PostgreSQL foundation, email/password authentication, workspace membership management, reusable workspace authorization guards, an authenticated responsive application shell, the commitment persistence/lifecycle/workspace API, and immutable commitment audit history. Communication integrations and product inbox workflows remain later stages.
+This repository is being built in dependency-ordered increments. The current implementation establishes the application runtime, quality gates, PostgreSQL foundation, email/password authentication, workspace membership management, reusable workspace authorization guards, an authenticated responsive application shell, the commitment persistence/lifecycle/workspace API, immutable commitment audit history, a workspace-scoped commitment inbox, and commitment detail with a read-only audit timeline. Provider integrations, message ingestion and extraction, and their automated product workflows remain later stages.
 
 ## Stack
 
