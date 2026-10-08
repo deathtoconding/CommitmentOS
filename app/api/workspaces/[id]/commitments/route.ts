@@ -1,4 +1,6 @@
 import { createCommitmentSchema } from '@/commitments/schemas';
+import { readJsonRequestBody } from '@/http/request-body';
+import { payloadTooLargeResponse } from '@/http/responses';
 import { createWorkspaceCommitment, listWorkspaceCommitments } from '@/commitments/service';
 import { requireWorkspaceMember } from '@/workspaces/authorization';
 import {
@@ -40,14 +42,12 @@ export async function POST(
     return access.response;
   }
 
-  let payload: unknown;
-  try {
-    payload = await request.json();
-  } catch {
-    return invalidRequestResponse();
+  const body = await readJsonRequestBody(request);
+  if (!body.ok) {
+    return body.reason === 'too-large' ? payloadTooLargeResponse() : invalidRequestResponse();
   }
 
-  const parsed = createCommitmentSchema.safeParse(payload);
+  const parsed = createCommitmentSchema.safeParse(body.value);
   if (!parsed.success) {
     return invalidRequestResponse();
   }

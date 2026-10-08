@@ -1,6 +1,8 @@
 import { toNextJsHandler } from 'better-auth/next-js';
 import { loginSchema, registrationSchema } from '@/auth/schemas';
 import { auth } from '@/auth/server';
+import { readBoundedRequestBody } from '@/http/request-body';
+import { payloadTooLargeResponse } from '@/http/responses';
 
 const authHandlers = toNextJsHandler(auth);
 
@@ -20,13 +22,27 @@ async function handlePost(request: Request): Promise<Response> {
         ? loginSchema
         : null;
 
+  const boundedBody = await readBoundedRequestBody(request);
+  if (!boundedBody.ok) {
+    return boundedBody.reason === 'too-large' ? payloadTooLargeResponse() : invalidRequest();
+  }
+
+  const headers = new Headers(request.headers);
+  headers.delete('content-length');
+
   if (!schema) {
-    return authHandlers.POST(request);
+    const boundedRequest = new Request(request.url, {
+      method: 'POST',
+      headers,
+      body: boundedBody.bytes.length > 0 ? boundedBody.bytes : null,
+      signal: request.signal,
+    });
+    return authHandlers.POST(boundedRequest);
   }
 
   let payload: unknown;
   try {
-    payload = await request.clone().json();
+    payload = JSON.parse(new TextDecoder().decode(boundedBody.bytes)) as unknown;
   } catch {
     return invalidRequest();
   }
@@ -36,8 +52,6 @@ async function handlePost(request: Request): Promise<Response> {
     return invalidRequest();
   }
 
-  const headers = new Headers(request.headers);
-  headers.delete('content-length');
   const validatedRequest = new Request(request.url, {
     method: 'POST',
     headers,

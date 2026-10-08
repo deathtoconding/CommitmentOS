@@ -3,6 +3,8 @@ import {
   removeWorkspaceMember,
   updateWorkspaceMemberRole,
 } from '@/workspaces/membership-management';
+import { readJsonRequestBody } from '@/http/request-body';
+import { payloadTooLargeResponse } from '@/http/responses';
 import { changeWorkspaceMemberRoleSchema } from '@/workspaces/schemas';
 import {
   forbiddenResponse,
@@ -26,14 +28,12 @@ export async function PATCH(
     return access.response;
   }
 
-  let payload: unknown;
-  try {
-    payload = await request.json();
-  } catch {
-    return invalidRequestResponse();
+  const body = await readJsonRequestBody(request);
+  if (!body.ok) {
+    return body.reason === 'too-large' ? payloadTooLargeResponse() : invalidRequestResponse();
   }
 
-  const parsed = changeWorkspaceMemberRoleSchema.safeParse(payload);
+  const parsed = changeWorkspaceMemberRoleSchema.safeParse(body.value);
   if (!parsed.success) {
     return invalidRequestResponse();
   }

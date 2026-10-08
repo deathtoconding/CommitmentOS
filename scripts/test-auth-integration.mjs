@@ -346,6 +346,12 @@ try {
     400,
     'Server-side Zod validation must reject weak passwords.',
   );
+  const oversizedRegistration = await authRequest('sign-up/email', {
+    name: 'x'.repeat(300_000),
+    email,
+    password,
+  });
+  assert.equal(oversizedRegistration.status, 413);
 
   const registration = await authRequest('sign-up/email', {
     name: 'CommitmentOS Test User',
@@ -754,6 +760,17 @@ try {
     },
   });
   assert.equal(apiCommitmentCreate.status, 400, 'Creation must reject lifecycle-only fields.');
+  const oversizedCommitmentCreate = await workspaceRequest(firstCommitmentsPath, {
+    method: 'POST',
+    cookie,
+    body: {
+      commitmentText: 'x'.repeat(300_000),
+      normalizedAction: 'Send oversized request',
+    },
+  });
+  assert.equal(oversizedCommitmentCreate.status, 413);
+  assert.equal((await oversizedCommitmentCreate.json()).error, 'PAYLOAD_TOO_LARGE');
+
   const validApiCommitmentCreate = await workspaceRequest(firstCommitmentsPath, {
     method: 'POST',
     cookie,

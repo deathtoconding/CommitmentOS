@@ -1,4 +1,6 @@
 import { updateCommitmentSchema } from '@/commitments/schemas';
+import { readJsonRequestBody } from '@/http/request-body';
+import { payloadTooLargeResponse } from '@/http/responses';
 import { getWorkspaceCommitment, updateWorkspaceCommitment } from '@/commitments/service';
 import { requireWorkspaceMember } from '@/workspaces/authorization';
 import {
@@ -44,14 +46,12 @@ export async function PATCH(
     return access.response;
   }
 
-  let payload: unknown;
-  try {
-    payload = await request.json();
-  } catch {
-    return invalidRequestResponse();
+  const body = await readJsonRequestBody(request);
+  if (!body.ok) {
+    return body.reason === 'too-large' ? payloadTooLargeResponse() : invalidRequestResponse();
   }
 
-  const parsed = updateCommitmentSchema.safeParse(payload);
+  const parsed = updateCommitmentSchema.safeParse(body.value);
   if (!parsed.success) {
     return invalidRequestResponse();
   }

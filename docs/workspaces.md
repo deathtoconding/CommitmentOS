@@ -19,7 +19,7 @@ Workspace API handlers use these guards instead of reimplementing session, membe
 
 ## API
 
-All endpoints require an authenticated Better Auth session and return `401 UNAUTHENTICATED` otherwise. Workspace IDs are treated only as selectors; access is established from the authenticated user and that workspace's membership.
+All endpoints require an authenticated Better Auth session and return `401 UNAUTHENTICATED` otherwise. JSON mutation bodies are streamed with a 256 KiB limit; oversized requests receive `413 PAYLOAD_TOO_LARGE`. Workspace IDs are treated only as selectors; access is established from the authenticated user and that workspace's membership.
 
 - `POST /api/workspaces` — accepts only `{ "name": "..." }`. The name is trimmed and must contain 1–100 characters. The server derives the owner from the session; client-supplied user or role fields are rejected. Returns `201` with the created workspace and `OWNER` role.
 - `GET /api/workspaces` — lists only the caller's memberships and their workspaces.

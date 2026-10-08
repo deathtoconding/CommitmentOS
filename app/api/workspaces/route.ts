@@ -3,6 +3,8 @@ import { database } from '@/db/client';
 import { workspace, workspaceMember } from '@/db/schema';
 import { listUserWorkspaces } from '@/workspaces/queries';
 import { requireSession } from '@/workspaces/authorization';
+import { readJsonRequestBody } from '@/http/request-body';
+import { payloadTooLargeResponse } from '@/http/responses';
 import { createWorkspaceSchema } from '@/workspaces/schemas';
 import {
   internalErrorResponse,
@@ -30,14 +32,12 @@ export async function POST(request: Request): Promise<Response> {
     return sessionResult.response;
   }
 
-  let payload: unknown;
-  try {
-    payload = await request.json();
-  } catch {
-    return invalidRequestResponse();
+  const body = await readJsonRequestBody(request);
+  if (!body.ok) {
+    return body.reason === 'too-large' ? payloadTooLargeResponse() : invalidRequestResponse();
   }
 
-  const parsed = createWorkspaceSchema.safeParse(payload);
+  const parsed = createWorkspaceSchema.safeParse(body.value);
   if (!parsed.success) {
     return invalidRequestResponse();
   }

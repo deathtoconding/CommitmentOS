@@ -3,6 +3,8 @@ import { database } from '@/db/client';
 import { user, workspaceMember } from '@/db/schema';
 import { addWorkspaceMember } from '@/workspaces/membership-management';
 import { requireWorkspaceMember, requireWorkspaceRole } from '@/workspaces/authorization';
+import { readJsonRequestBody } from '@/http/request-body';
+import { payloadTooLargeResponse } from '@/http/responses';
 import { addWorkspaceMemberSchema } from '@/workspaces/schemas';
 import {
   forbiddenResponse,
@@ -57,14 +59,12 @@ export async function POST(
     return access.response;
   }
 
-  let payload: unknown;
-  try {
-    payload = await request.json();
-  } catch {
-    return invalidRequestResponse();
+  const body = await readJsonRequestBody(request);
+  if (!body.ok) {
+    return body.reason === 'too-large' ? payloadTooLargeResponse() : invalidRequestResponse();
   }
 
-  const parsed = addWorkspaceMemberSchema.safeParse(payload);
+  const parsed = addWorkspaceMemberSchema.safeParse(body.value);
   if (!parsed.success) {
     return invalidRequestResponse();
   }
