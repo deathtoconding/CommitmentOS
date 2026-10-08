@@ -37,14 +37,17 @@ export function AuthForm({ mode }: AuthFormProps) {
 
       setIsSubmitting(true);
       try {
-        const result = await authClient.signUp.email(parsed.data);
+        const result = await authClient.signUp.email({
+          ...parsed.data,
+          callbackURL: '/login?verified=1',
+        });
         if (result.error) {
           setError('We could not process registration. Please check the details and try again.');
           return;
         }
 
         setNotice(
-          'If this email address is available, your account is ready. You can now sign in.',
+          'If this email address is available, check its inbox for a verification link before signing in.',
         );
       } catch {
         setError('Authentication is temporarily unavailable. Please try again.');
@@ -64,7 +67,11 @@ export function AuthForm({ mode }: AuthFormProps) {
     try {
       const result = await authClient.signIn.email(parsed.data);
       if (result.error) {
-        setError('Sign-in failed. Check your email and password, then try again.');
+        setError(
+          result.error.code === 'EMAIL_NOT_VERIFIED'
+            ? 'Verify your email address before signing in. A verification link has been sent if this address is registered.'
+            : 'Sign-in failed. Check your email and password, then try again.',
+        );
         return;
       }
 

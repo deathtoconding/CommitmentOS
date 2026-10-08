@@ -34,6 +34,11 @@ jobs:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/commitmentos
       BETTER_AUTH_SECRET: commitmentos-ci-only-secret-do-not-use-in-production
       BETTER_AUTH_URL: http://localhost:3000
+      SMTP_HOST: 127.0.0.1
+      SMTP_PORT: 3142
+      SMTP_USER: commitmentos-ci
+      SMTP_PASSWORD: commitmentos-ci-smtp-password
+      EMAIL_FROM: noreply@commitmentos.test
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

@@ -1,9 +1,13 @@
+import 'dotenv/config';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
-import { setTimeout as delay } from 'node:timers/promises';
+import { execFileSync, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { resolve } from 'node:path';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import pg from 'pg';
+import { SMTPServer } from 'smtp-server';
 
 const { Pool } = pg;
 const port = Number(process.env.AUTH_E2E_PORT ?? 3141);
@@ -19,16 +23,125 @@ const email = `commitmentos.test+${randomUUID()}@example.com`;
 const secondEmail = `commitmentos.test+${randomUUID()}@example.com`;
 const testEmails = [email, secondEmail];
 const password = 'CommitmentOS-Test-Password-2026!';
+const smtpPort = Number(process.env.AUTH_E2E_SMTP_PORT ?? 3142);
+const smtpUser = process.env.SMTP_USER ?? 'commitmentos-integration';
+const smtpPassword = process.env.SMTP_PASSWORD ?? 'commitmentos-integration-smtp-secret';
+const emailFrom = process.env.EMAIL_FROM ?? 'noreply@commitmentos.test';
+const emailTlsDirectory = mkdtempSync(join(tmpdir(), 'commitmentos-smtp-'));
+const emailTlsKeyPath = join(emailTlsDirectory, 'server.key');
+const emailTlsCertificatePath = join(emailTlsDirectory, 'server.crt');
+const verificationMessages = [];
 const workspaceIds = [];
 const pool = new Pool({
   connectionString: databaseUrl,
   application_name: 'commitmentos-integration-test',
 });
 let server;
+let smtpServer;
 let serverOutput = '';
 
 function appendServerOutput(chunk) {
   serverOutput = `${serverOutput}${chunk.toString()}`.slice(-4000);
+}
+
+async function startEmailServer() {
+  execFileSync(
+    'openssl',
+    [
+      'req',
+      '-x509',
+      '-newkey',
+      'rsa:2048',
+      '-nodes',
+      '-keyout',
+      emailTlsKeyPath,
+      '-out',
+      emailTlsCertificatePath,
+      '-days',
+      '1',
+      '-subj',
+      '/CN=127.0.0.1',
+      '-addext',
+      'subjectAltName=IP:127.0.0.1,DNS:localhost',
+    ],
+    { stdio: 'ignore' },
+  );
+
+  smtpServer = new SMTPServer({
+    authMethods: ['PLAIN', 'LOGIN'],
+    authOptional: false,
+    cert: readFileSync(emailTlsCertificatePath),
+    key: readFileSync(emailTlsKeyPath),
+    onAuth(auth, _session, callback) {
+      if (auth.username !== smtpUser || auth.password !== smtpPassword) {
+        callback(new Error('SMTP test authentication failed.'));
+        return;
+      }
+      callback(null, { user: auth.username });
+    },
+    onData(stream, session, callback) {
+      const chunks = [];
+      stream.on('data', (chunk) => chunks.push(chunk));
+      stream.on('error', callback);
+      stream.on('end', () => {
+        verificationMessages.push({
+          recipient: session.envelope.rcptTo[0]?.address?.toLowerCase(),
+          raw: Buffer.concat(chunks).toString('utf8'),
+        });
+        callback(null, 'Accepted for integration delivery.');
+      });
+    },
+  });
+
+  await new Promise((resolveServer, rejectServer) => {
+    smtpServer.once('error', rejectServer);
+    smtpServer.listen(smtpPort, '127.0.0.1', () => {
+      smtpServer.removeListener('error', rejectServer);
+      resolveServer();
+    });
+  });
+}
+
+async function verificationLinkFor(recipient) {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const message = [...verificationMessages]
+      .reverse()
+      .find((delivery) => delivery.recipient === recipient.toLowerCase());
+    const links = message?.raw.match(/https?:\/\/[^\s<>"']+/g) ?? [];
+    const link = links
+      .map((value) => value.replace(/[),.]+$/, ''))
+      .find((value) => value.includes('/verify-email?'));
+    if (link) return link;
+    await delay(50);
+  }
+
+  throw new Error(`No verification link was delivered to ${recipient}.`);
+}
+
+async function followVerificationLink(recipient) {
+  const verificationResponse = await fetch(await verificationLinkFor(recipient), {
+    redirect: 'manual',
+  });
+  assert.equal(
+    verificationResponse.status,
+    302,
+    'A valid email verification link should redirect to its configured callback.',
+  );
+  const callback = new URL(verificationResponse.headers.get('location') ?? '', baseURL);
+  assert.equal(callback.origin, baseURL);
+  assert.equal(callback.pathname, '/login');
+  assert.equal(callback.searchParams.get('verified'), '1');
+
+  const verifiedPage = await appPageRequest('/login?verified=1');
+  assert.equal(verifiedPage.status, 200);
+  assert.match(await verifiedPage.text(), /Your email is verified/);
+}
+
+async function cleanupEmailServer() {
+  if (smtpServer?.server?.listening) {
+    await new Promise((resolveServer) => smtpServer.close(resolveServer));
+  }
+  rmSync(emailTlsDirectory, { recursive: true, force: true });
 }
 
 function startServer() {
@@ -41,8 +154,14 @@ function startServer() {
       env: {
         ...process.env,
         BETTER_AUTH_URL: baseURL,
+        EMAIL_FROM: emailFrom,
         NODE_ENV: 'production',
         PORT: String(port),
+        SMTP_HOST: '127.0.0.1',
+        SMTP_PASSWORD: smtpPassword,
+        SMTP_PORT: String(smtpPort),
+        SMTP_TLS_CA: emailTlsCertificatePath,
+        SMTP_USER: smtpUser,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     },
@@ -322,6 +441,7 @@ async function cleanupServer() {
 }
 
 try {
+  await startEmailServer();
   startServer();
   await waitForServer();
 
@@ -357,10 +477,14 @@ try {
     name: 'CommitmentOS Test User',
     email,
     password,
+    callbackURL: '/login?verified=1',
   });
   assert.ok(registration.ok, 'A new account should register successfully.');
   const registrationResult = await registration.json();
   assert.equal(registrationResult.user.email, email);
+  assert.equal(registrationResult.user.emailVerified, false);
+  const initialVerificationLink = await verificationLinkFor(email);
+  assert.match(initialVerificationLink, /\/api\/auth\/verify-email\?/);
 
   const duplicateRegistration = await authRequest('sign-up/email', {
     name: 'Another Name',
@@ -405,8 +529,32 @@ try {
   });
   assert.equal(invalidLogin.ok, false, 'Invalid credentials must be rejected.');
 
+  const unverifiedLogin = await authRequest('sign-in/email', {
+    email,
+    password,
+    callbackURL: '/login?verified=1',
+  });
+  assert.equal(
+    unverifiedLogin.ok,
+    false,
+    'Correct credentials must not bypass email verification.',
+  );
+  const unverifiedLoginBody = await unverifiedLogin.json();
+  assert.equal(unverifiedLoginBody.code, 'EMAIL_NOT_VERIFIED');
+  const unverifiedAccountBeforeVerification = await pool.query(
+    'SELECT email_verified FROM commitmentos."user" WHERE id = $1',
+    [registrationResult.user.id],
+  );
+  assert.equal(unverifiedAccountBeforeVerification.rows[0]?.email_verified, false);
+  await followVerificationLink(email);
+  const verifiedAccount = await pool.query(
+    'SELECT email_verified FROM commitmentos."user" WHERE id = $1',
+    [registrationResult.user.id],
+  );
+  assert.equal(verifiedAccount.rows[0]?.email_verified, true);
+
   const login = await authRequest('sign-in/email', { email, password });
-  assert.ok(login.ok, 'Valid credentials should create a session.');
+  assert.ok(login.ok, 'A user who followed the delivered verification link should sign in.');
   const setCookieHeaders = login.headers.getSetCookie();
   const sessionSetCookie = setCookieHeaders.find((value) => value.includes('session_token'));
   assert.ok(sessionSetCookie, 'Sign-in should set an HTTP session cookie.');
@@ -418,6 +566,17 @@ try {
     cookie.includes('session_token'),
     'The session cookie must be available to the HTTP client.',
   );
+  const selfVerificationAttempt = await authRequest('update-user', { emailVerified: true }, cookie);
+  assert.equal(
+    selfVerificationAttempt.ok,
+    false,
+    'Authenticated users must not be able to mark their own email address as verified.',
+  );
+  const selfVerifiedAccount = await pool.query(
+    'SELECT email_verified FROM commitmentos."user" WHERE id = $1',
+    [registrationResult.user.id],
+  );
+  assert.equal(selfVerifiedAccount.rows[0]?.email_verified, true);
 
   const authenticatedPage = await fetch(`${baseURL}/app`, {
     headers: { cookie },
@@ -651,12 +810,40 @@ try {
     name: 'Second Integration User',
     email: secondEmail,
     password,
+    callbackURL: '/login?verified=1',
   });
   assert.ok(secondRegistration.ok, 'A second user should register for isolation checks.');
   const secondRegistrationResult = await secondRegistration.json();
   assert.equal(secondRegistrationResult.user.email, secondEmail);
+  assert.equal(secondRegistrationResult.user.emailVerified, false);
+
+  const unverifiedMemberResponse = await workspaceRequest(
+    `/api/workspaces/${firstWorkspace.id}/members`,
+    {
+      method: 'POST',
+      cookie,
+      body: { email: secondEmail },
+    },
+  );
+  assert.equal(
+    unverifiedMemberResponse.status,
+    404,
+    'An unverified email address must not be added to a workspace.',
+  );
+  const secondUnverifiedAccount = await pool.query(
+    'SELECT email_verified FROM commitmentos."user" WHERE id = $1',
+    [secondRegistrationResult.user.id],
+  );
+  assert.equal(secondUnverifiedAccount.rows[0]?.email_verified, false);
+  await followVerificationLink(secondEmail);
+  const secondVerifiedAccount = await pool.query(
+    'SELECT email_verified FROM commitmentos."user" WHERE id = $1',
+    [secondRegistrationResult.user.id],
+  );
+  assert.equal(secondVerifiedAccount.rows[0]?.email_verified, true);
+
   const secondLogin = await authRequest('sign-in/email', { email: secondEmail, password });
-  assert.ok(secondLogin.ok, 'The second user should be able to sign in.');
+  assert.ok(secondLogin.ok, 'The verified second user should be able to sign in.');
   const secondCookie = readCookieHeader(secondLogin);
 
   const secondUserCannotSelectFirstWorkspace = await appPageRequest(
@@ -929,40 +1116,6 @@ try {
   const emptySecondUserList = await workspaceRequest('/api/workspaces', { cookie: secondCookie });
   assert.equal(emptySecondUserList.status, 200);
   assert.deepEqual((await emptySecondUserList.json()).workspaces, []);
-
-  const unverifiedMemberResponse = await workspaceRequest(
-    `/api/workspaces/${firstWorkspace.id}/members`,
-    {
-      method: 'POST',
-      cookie,
-      body: { email: secondEmail },
-    },
-  );
-  assert.equal(
-    unverifiedMemberResponse.status,
-    404,
-    'An unverified email address must not be added to a workspace.',
-  );
-  const selfVerificationAttempt = await authRequest(
-    'update-user',
-    { emailVerified: true },
-    secondCookie,
-  );
-  assert.equal(
-    selfVerificationAttempt.ok,
-    false,
-    'Users must not be able to mark their own email address as verified.',
-  );
-  const unverifiedAccount = await pool.query(
-    'SELECT email_verified FROM commitmentos."user" WHERE id = $1',
-    [secondRegistrationResult.user.id],
-  );
-  assert.equal(unverifiedAccount.rows[0]?.email_verified, false);
-
-  // Simulate a verified account record; the email-verification delivery flow is not implemented here.
-  await pool.query('UPDATE commitmentos."user" SET email_verified = true WHERE id = $1', [
-    secondRegistrationResult.user.id,
-  ]);
 
   const failedMembershipAuditSuffix = randomUUID().replaceAll('-', '');
   const rejectMembershipAuditFunction = `integration_reject_workspace_audit_${failedMembershipAuditSuffix}`;
@@ -1761,6 +1914,7 @@ try {
   process.exitCode = 1;
 } finally {
   await cleanupServer();
+  await cleanupEmailServer();
   const cleanupClient = await pool.connect();
   try {
     await cleanupClient.query('BEGIN');
