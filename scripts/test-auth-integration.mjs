@@ -102,12 +102,19 @@ async function startEmailServer() {
   });
 }
 
+function decodeQuotedPrintable(value) {
+  return value
+    .replace(/=\r?\n/g, '')
+    .replace(/=([0-9a-f]{2})/gi, (_match, hex) => String.fromCharCode(Number.parseInt(hex, 16)));
+}
+
 async function verificationLinkFor(recipient) {
   for (let attempt = 0; attempt < 40; attempt += 1) {
     const message = [...verificationMessages]
       .reverse()
       .find((delivery) => delivery.recipient === recipient.toLowerCase());
-    const links = message?.raw.match(/https?:\/\/[^\s<>"']+/g) ?? [];
+    const decodedMessage = message ? decodeQuotedPrintable(message.raw) : '';
+    const links = decodedMessage.match(/https?:\/\/[^\s<>"']+/g) ?? [];
     const link = links
       .map((value) => value.replace(/[),.]+$/, ''))
       .find((value) => value.includes('/verify-email?'));
@@ -120,7 +127,10 @@ async function verificationLinkFor(recipient) {
 
 async function followVerificationLink(recipient) {
   const verificationLink = await verificationLinkFor(recipient);
-  const verificationResponse = await fetch(verificationLink, { redirect: 'manual' });
+  const verificationUrl = new URL(verificationLink);
+  assert.ok(verificationUrl.searchParams.get('token'));
+  assert.equal(verificationUrl.searchParams.get('callbackURL'), '/login?verified=1');
+  const verificationResponse = await fetch(verificationUrl, { redirect: 'manual' });
   if (verificationResponse.status !== 302) {
     const responseBody = await verificationResponse.json().catch(() => ({}));
     const callback = new URL(verificationLink).searchParams.get('callbackURL') ?? 'missing';
