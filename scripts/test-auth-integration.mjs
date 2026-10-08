@@ -119,14 +119,15 @@ async function verificationLinkFor(recipient) {
 }
 
 async function followVerificationLink(recipient) {
-  const verificationResponse = await fetch(await verificationLinkFor(recipient), {
-    redirect: 'manual',
-  });
-  assert.equal(
-    verificationResponse.status,
-    302,
-    'A valid email verification link should redirect to its configured callback.',
-  );
+  const verificationLink = await verificationLinkFor(recipient);
+  const verificationResponse = await fetch(verificationLink, { redirect: 'manual' });
+  if (verificationResponse.status !== 302) {
+    const responseBody = await verificationResponse.json().catch(() => ({}));
+    const callback = new URL(verificationLink).searchParams.get('callbackURL') ?? 'missing';
+    throw new Error(
+      `A valid email verification link should redirect to its configured callback (HTTP ${verificationResponse.status}, ${responseBody.code ?? 'unknown'}: ${responseBody.message ?? 'no message'}, callback ${callback}).`,
+    );
+  }
   const callback = new URL(verificationResponse.headers.get('location') ?? '', baseURL);
   assert.equal(callback.origin, baseURL);
   assert.equal(callback.pathname, '/login');
