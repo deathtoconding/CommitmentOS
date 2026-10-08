@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { and, desc, eq, lt, or } from 'drizzle-orm';
+import { and, count, desc, eq, lt, or, sql } from 'drizzle-orm';
 import { database } from '../db/client';
 import {
   commitment,
@@ -14,6 +14,7 @@ import {
   type CommitmentAuditEventDraft,
 } from './audit-model';
 import type { Commitment } from './model';
+import { summarizeWorkspaceCommitments, type WorkspaceCommitmentSummary } from './dashboard-model';
 import { transitionCommitment } from './lifecycle';
 import type { CreateCommitmentInput, UpdateCommitmentInput } from './schemas';
 
@@ -82,6 +83,23 @@ export async function listWorkspaceCommitments(workspaceId: string): Promise<Com
     .from(commitment)
     .where(eq(commitment.workspaceId, workspaceId))
     .orderBy(desc(commitment.createdAt), desc(commitment.id));
+}
+
+/** Returns workspace-scoped aggregate counts without loading commitment content. */
+export async function getWorkspaceCommitmentSummary(
+  workspaceId: string,
+): Promise<WorkspaceCommitmentSummary> {
+  const statusCounts = await database
+    .select({
+      status: commitment.status,
+      count: count(),
+      unassignedCount: count(sql`CASE WHEN ${commitment.ownerUserId} IS NULL THEN 1 END`),
+    })
+    .from(commitment)
+    .where(eq(commitment.workspaceId, workspaceId))
+    .groupBy(commitment.status);
+
+  return summarizeWorkspaceCommitments(statusCounts);
 }
 
 export async function getWorkspaceCommitment(

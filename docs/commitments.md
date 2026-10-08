@@ -65,6 +65,10 @@ Deadline display uses the stored IANA timezone when valid, including timezone-da
 
 The authenticated `/app/commitments/:commitmentId` page resolves the requested workspace against memberships for the current server-verified session, then loads the record with both the authorized workspace ID and commitment ID. Missing, cross-workspace, and nonmember requests render the same generic not-found state. The page shows the stored commitment/action text, status, known owner/deadline/counterparty name, creation time, and a read-only audit timeline. It does not render source excerpts, provider message IDs, counterparty email, or completion-evidence contents. Audit history is scoped to the same workspace and commitment, ordered newest first, and uses a validated keyset cursor to load older events.
 
+## Workspace dashboard
+
+The authenticated `/app` dashboard first resolves the active workspace against the current session user's memberships, then requests an aggregate grouped by the commitment status for that workspace only. It returns counts rather than commitment content. “Active” means every stored status except terminal `COMPLETED` and `DISMISSED`; “Needs an owner” counts active rows whose owner is unknown. “Due soon” and “Marked overdue” reflect saved lifecycle statuses only—this dashboard does not recalculate deadlines or imply that automatic scheduling has been implemented. The existing workspace-specific empty state is shown when there are no commitments. The page contains no provider identifiers, message text, excerpts, counterparty email, or owner email.
+
 ## Indexes
 
 Indexes support workspace/status/due-date listing, newest-first workspace commitment inbox ordering, workspace/owner lookup, and workspace/source-message lookup. The inbox ordering index is added by `drizzle/0005_commitment_inbox_order_index.sql`; the aggregate indexes are in `drizzle/0003_commitment_aggregate.sql`.

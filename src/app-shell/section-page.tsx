@@ -3,7 +3,8 @@ import { notFound, redirect } from 'next/navigation';
 import type { ReactNode } from 'react';
 import { getAuthenticatedSession } from '@/auth/session';
 import { CommitmentInbox } from '@/commitments/commitment-inbox';
-import { listWorkspaceCommitments } from '@/commitments/service';
+import { CommitmentDashboard } from '@/commitments/commitment-dashboard';
+import { getWorkspaceCommitmentSummary, listWorkspaceCommitments } from '@/commitments/service';
 import { resolveActiveWorkspace } from '@/workspaces/active-workspace';
 import { listUserWorkspaces } from '@/workspaces/queries';
 
@@ -248,6 +249,8 @@ export async function AppSectionPage({
   const workspace = resolution.status === 'selected' ? resolution.workspace : null;
   const commitments =
     section === 'inbox' && workspace ? await listWorkspaceCommitments(workspace.id) : [];
+  const dashboardSummary =
+    section === 'dashboard' && workspace ? await getWorkspaceCommitmentSummary(workspace.id) : null;
 
   const pageTitle = section === 'settings' ? 'Settings' : sectionCopy[section].title;
   const pageDescription =
@@ -277,6 +280,12 @@ export async function AppSectionPage({
           name={currentSession.user.name}
           workspace={workspace ? { name: workspace.name, role: workspace.role } : null}
         />
+      ) : section === 'dashboard' && workspace && dashboardSummary ? (
+        dashboardSummary.total === 0 ? (
+          <EmptyState copy={sectionCopy.dashboard} />
+        ) : (
+          <CommitmentDashboard summary={dashboardSummary} workspaceId={workspace.id} />
+        )
       ) : section === 'inbox' && workspace ? (
         <CommitmentInbox commitments={commitments} workspaceId={workspace.id} />
       ) : workspace ? (

@@ -920,6 +920,131 @@ a:focus-visible {
   line-height: 1.65;
 }
 
+.commitment-dashboard {
+  display: grid;
+  gap: 1rem;
+}
+
+.commitment-dashboard-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.commitment-dashboard-heading h2 {
+  margin: 0;
+  color: #294235;
+  font-size: 1.05rem;
+  letter-spacing: -0.025em;
+}
+
+.commitment-dashboard-heading p:last-child {
+  margin: 0.45rem 0 0;
+  color: #718278;
+  font-size: 0.79rem;
+  line-height: 1.5;
+}
+
+.commitment-dashboard-link {
+  flex: 0 0 auto;
+  min-height: 2.4rem;
+  padding: 0.55rem 0.8rem;
+  font-size: 0.76rem;
+}
+
+.commitment-dashboard-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr));
+  gap: 0.75rem;
+  margin: 0;
+}
+
+.commitment-dashboard-card {
+  min-width: 0;
+  padding: 1rem 1.1rem;
+  border: 1px solid #e1eae4;
+  border-radius: 1rem;
+  background: linear-gradient(135deg, #fff, #fbfdfb);
+  box-shadow: 0 8px 24px rgb(45 74 54 / 4%);
+}
+
+.commitment-dashboard-card dt {
+  color: #698174;
+  font-size: 0.69rem;
+  font-weight: 750;
+}
+
+.commitment-dashboard-card dd {
+  margin: 0.45rem 0 0;
+  color: #294235;
+  font-size: clamp(1.75rem, 4vw, 2.45rem);
+  font-variant-numeric: tabular-nums;
+  font-weight: 750;
+  letter-spacing: -0.05em;
+  line-height: 1;
+}
+
+.commitment-dashboard-card p {
+  margin: 0.55rem 0 0;
+  color: #839188;
+  font-size: 0.67rem;
+  line-height: 1.45;
+}
+
+.dashboard-status-card {
+  padding: 1.15rem;
+  border: 1px solid #e1eae4;
+  border-radius: 1rem;
+  background: rgb(255 255 255 / 88%);
+}
+
+.dashboard-status-heading h3 {
+  margin: 0;
+  color: #294235;
+  font-size: 0.9rem;
+}
+
+.dashboard-status-heading p {
+  margin: 0.35rem 0 0;
+  color: #839188;
+  font-size: 0.7rem;
+}
+
+.dashboard-status-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 8rem), 1fr));
+  gap: 0.55rem;
+  margin: 1rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.dashboard-status-list li {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.55rem 0.6rem;
+  border: 1px solid #edf1ee;
+  border-radius: 0.7rem;
+  background: #fbfdfb;
+}
+
+.dashboard-status-list li > span:last-child {
+  color: #41594b;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 750;
+}
+
+.dashboard-status-label .commitment-status-pill {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .commitment-inbox-panel {
   display: grid;
   gap: 0.8rem;
@@ -1616,6 +1741,11 @@ a:focus-visible {
 
   .app-page-context {
     align-self: flex-start;
+  }
+
+  .commitment-dashboard-heading {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .app-empty-state {

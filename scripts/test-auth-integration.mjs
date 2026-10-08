@@ -1307,6 +1307,30 @@ try {
     userId: registrationResult.user.id,
   });
 
+  const firstWorkspaceDashboard = await appPageRequest(
+    `/app?workspaceId=${firstWorkspace.id}`,
+    cookie,
+  );
+  assert.equal(firstWorkspaceDashboard.status, 200);
+  const firstWorkspaceDashboardBody = await firstWorkspaceDashboard.text();
+  assert.match(firstWorkspaceDashboardBody, /<dt>Active commitments<\/dt>\s*<dd>1<\/dd>/);
+  assert.match(firstWorkspaceDashboardBody, /<dt>Needs an owner<\/dt>\s*<dd>0<\/dd>/);
+  assert.match(firstWorkspaceDashboardBody, /<span aria-label="Open: 1">1<\/span>/);
+  assert.doesNotMatch(firstWorkspaceDashboardBody, /Follow up|provider-message-123/);
+  assert.ok(!firstWorkspaceDashboardBody.includes('customer@example.test'));
+  assert.match(firstWorkspaceDashboard.headers.get('cache-control') ?? '', /no-store/i);
+
+  const secondWorkspaceDashboard = await appPageRequest(
+    `/app?workspaceId=${secondWorkspace.id}`,
+    cookie,
+  );
+  assert.equal(secondWorkspaceDashboard.status, 200);
+  const secondWorkspaceDashboardBody = await secondWorkspaceDashboard.text();
+  assert.match(secondWorkspaceDashboardBody, /<dt>Active commitments<\/dt>\s*<dd>1<\/dd>/);
+  assert.match(secondWorkspaceDashboardBody, /<dt>Needs an owner<\/dt>\s*<dd>1<\/dd>/);
+  assert.match(secondWorkspaceDashboardBody, /<span aria-label="Detected: 1">1<\/span>/);
+  assert.doesNotMatch(secondWorkspaceDashboardBody, /Send the revised proposal/);
+
   const firstWorkspaceInbox = await appPageRequest(
     `/app/inbox?workspaceId=${firstWorkspace.id}`,
     cookie,
@@ -1463,6 +1487,19 @@ try {
   assert.equal(apiCommitment.status, 'DETECTED', 'API-created commitments start in DETECTED.');
   assert.equal(apiCommitment.completionEvidence, null);
   assert.equal(apiCommitment.completedAt, null);
+
+  const dashboardAfterApiCreate = await appPageRequest(
+    `/app?workspaceId=${firstWorkspace.id}`,
+    cookie,
+  );
+  assert.equal(dashboardAfterApiCreate.status, 200);
+  const dashboardAfterApiCreateBody = await dashboardAfterApiCreate.text();
+  assert.match(dashboardAfterApiCreateBody, /<dt>Active commitments<\/dt>\s*<dd>2<\/dd>/);
+  assert.match(dashboardAfterApiCreateBody, /<dt>Needs an owner<\/dt>\s*<dd>1<\/dd>/);
+  assert.match(dashboardAfterApiCreateBody, /<span aria-label="Detected: 1">1<\/span>/);
+  assert.match(dashboardAfterApiCreateBody, /<span aria-label="Open: 1">1<\/span>/);
+  assert.doesNotMatch(dashboardAfterApiCreateBody, /provider-message-123/);
+  assert.ok(!dashboardAfterApiCreateBody.includes('customer@example.test'));
 
   const createdAuditResult = await pool.query(
     `SELECT workspace_id, commitment_id, actor_user_id, event_type, details, occurred_at
