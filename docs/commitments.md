@@ -67,4 +67,4 @@ The authenticated `/app/commitments/:commitmentId` page resolves the requested w
 
 ## Indexes
 
-Indexes support workspace/status/due-date listing, workspace/owner lookup, and workspace/source-message lookup. The migration is `drizzle/0003_commitment_aggregate.sql`.
+Indexes support workspace/status/due-date listing, newest-first workspace commitment inbox ordering, workspace/owner lookup, and workspace/source-message lookup. The inbox ordering index is added by `drizzle/0005_commitment_inbox_order_index.sql`; the aggregate indexes are in `drizzle/0003_commitment_aggregate.sql`.

@@ -147,6 +147,11 @@ export const commitment = commitmentosSchema.table(
       table.status,
       table.dueAt,
     ),
+    index('commitment_workspace_created_at_id_idx').on(
+      table.workspaceId,
+      table.createdAt,
+      table.id,
+    ),
     index('commitment_workspace_owner_user_id_idx').on(table.workspaceId, table.ownerUserId),
     index('commitment_workspace_source_message_idx').on(table.workspaceId, table.sourceMessageId),
   ],

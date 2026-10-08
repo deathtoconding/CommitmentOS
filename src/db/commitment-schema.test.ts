@@ -68,6 +68,7 @@ describe('commitment PostgreSQL schema', () => {
     ]);
     expect(tableConfig.indexes.map((index) => index.config.name)).toEqual([
       'commitment_workspace_status_due_at_idx',
+      'commitment_workspace_created_at_id_idx',
       'commitment_workspace_owner_user_id_idx',
       'commitment_workspace_source_message_idx',
     ]);
