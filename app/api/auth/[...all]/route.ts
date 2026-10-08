@@ -1,6 +1,11 @@
 import { toNextJsHandler } from 'better-auth/next-js';
+import {
+  consumeEmailVerificationToken,
+  isEmailVerificationTokenConsumed,
+} from '@/auth/email-verification-token';
 import { loginSchema, registrationSchema } from '@/auth/schemas';
 import { auth } from '@/auth/server';
+import { databasePool } from '@/db/client';
 import { readBoundedRequestBody } from '@/http/request-body';
 import { payloadTooLargeResponse } from '@/http/responses';
 
@@ -62,5 +67,48 @@ async function handlePost(request: Request): Promise<Response> {
   return authHandlers.POST(validatedRequest);
 }
 
-export const GET = authHandlers.GET;
+async function handleGet(request: Request): Promise<Response> {
+  const url = new URL(request.url);
+  if (url.pathname === '/api/auth/verify-email') {
+    const token = url.searchParams.get('token');
+    if (token && (await isEmailVerificationTokenConsumed(databasePool, token))) {
+      return Response.json(
+        {
+          code: 'INVALID_TOKEN',
+          message: 'The email verification link is invalid, expired, or already used.',
+        },
+        {
+          status: 400,
+          headers: {
+            'cache-control': 'no-store',
+            'referrer-policy': 'no-referrer',
+          },
+        },
+      );
+    }
+  }
+
+  const response = await authHandlers.GET(request);
+  const token = url.searchParams.get('token');
+  if (url.pathname === '/api/auth/verify-email' && token && response.status === 302) {
+    const location = response.headers.get('location');
+    const callback = location ? new URL(location, url.origin) : null;
+    const errorCode = callback?.searchParams.get('error');
+    const verificationErrorCodes = new Set([
+      'INVALID_TOKEN',
+      'TOKEN_EXPIRED',
+      'USER_NOT_FOUND',
+      'INVALID_USER',
+    ]);
+
+    if (!errorCode || !verificationErrorCodes.has(errorCode)) {
+      // Also consume successful links for accounts verified by another still-valid link.
+      await consumeEmailVerificationToken(databasePool, token);
+    }
+  }
+
+  return response;
+}
+
+export const GET = handleGet;
 export const POST = handlePost;

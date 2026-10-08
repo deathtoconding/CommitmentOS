@@ -15,7 +15,16 @@ Next.js application
   └── Drizzle database adapter
 
 PostgreSQL
-  └── commitmentos schema (auth, workspace, membership, and commitment tables; other product tables later)
+  ├── commitmentos schema (auth, workspace, membership, commitments, and durable job/outbox state)
+  └── source of truth for job idempotency, status, retries, leases, and worker heartbeats
+
+Redis / BullMQ
+  └── transport and delayed retry scheduling; messages contain job/correlation IDs only
+
+Background worker (separate process)
+  ├── claims workspace-scoped durable jobs from PostgreSQL
+  ├── applies bounded retries, backoff, timeouts, and dead-letter handling
+  └── publishes readiness through a PostgreSQL heartbeat
 ```
 
 ## Boundaries
@@ -35,6 +44,7 @@ PostgreSQL
 - Drizzle ORM and Drizzle Kit for typed access and versioned migrations.
 - npm as the package manager, with a committed lockfile.
 - Vitest for fast unit tests; PostgreSQL-backed checks run separately in CI.
-- Docker Compose provides a local PostgreSQL service without requiring it for frontend-only development.
+- Docker Compose provides local PostgreSQL and Redis services without requiring them for frontend-only development.
+- PostgreSQL is the durable background-job outbox/source of truth; BullMQ/Redis only transports due work and schedules retries. Workers are separate processes with readiness heartbeats.
 
 See [ADR-0001](adr/0001-platform-foundation.md) for rationale and consequences.

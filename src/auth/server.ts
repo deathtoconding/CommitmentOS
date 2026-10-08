@@ -1,9 +1,14 @@
 import 'server-only';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { betterAuth } from 'better-auth';
-import { database } from '@/db/client';
-import { account, session, user, verification } from '@/db/schema';
-import { sendVerificationEmail } from './email-delivery';
+import { APIError } from 'better-auth/api';
+import { database, databasePool } from '@/db/client';
+import { account, rateLimit, session, user, verification } from '@/db/schema';
+import {
+  consumeEmailVerificationToken,
+  EMAIL_VERIFICATION_TOKEN_TTL_SECONDS,
+} from './email-verification-token';
+import { sendPasswordResetEmail, sendVerificationEmail } from './email-delivery';
 import { getAuthEnvironment } from './environment';
 
 const authEnvironment = getAuthEnvironment();
@@ -16,7 +21,7 @@ export const auth = betterAuth({
   database: drizzleAdapter(database, {
     provider: 'pg',
     schemaName: 'commitmentos',
-    schema: { user, session, account, verification },
+    schema: { user, session, account, verification, rateLimit },
     debugLogs: false,
   }),
   emailAndPassword: {
@@ -25,13 +30,28 @@ export const auth = betterAuth({
     requireEmailVerification: true,
     minPasswordLength: 12,
     maxPasswordLength: 128,
+    resetPasswordTokenExpiresIn: 60 * 60,
+    revokeSessionsOnPasswordReset: true,
+    sendResetPassword: sendPasswordResetEmail,
+  },
+  verification: {
+    storeIdentifier: 'hashed',
   },
   emailVerification: {
     sendVerificationEmail,
     sendOnSignUp: true,
     sendOnSignIn: true,
-    expiresIn: 60 * 60 * 24,
+    expiresIn: EMAIL_VERIFICATION_TOKEN_TTL_SECONDS,
     autoSignInAfterVerification: false,
+    async beforeEmailVerification(_user, request) {
+      const token = request ? new URL(request.url).searchParams.get('token') : null;
+      if (!token || !(await consumeEmailVerificationToken(databasePool, token))) {
+        throw APIError.from('BAD_REQUEST', {
+          code: 'INVALID_TOKEN',
+          message: 'The email verification link is invalid, expired, or already used.',
+        });
+      }
+    },
   },
   session: {
     expiresIn: 60 * 60 * 24 * 7,
@@ -44,12 +64,15 @@ export const auth = betterAuth({
   },
   rateLimit: {
     enabled: process.env.NODE_ENV === 'production',
+    storage: 'database',
     window: 60,
     max: 100,
     customRules: {
       '/sign-in/email': { window: 60, max: 10 },
       '/sign-up/email': { window: 60, max: 5 },
       '/send-verification-email': { window: 60, max: 3 },
+      '/request-password-reset': { window: 60, max: 3 },
+      '/reset-password': { window: 60, max: 5 },
     },
   },
   telemetry: {

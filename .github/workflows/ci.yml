@@ -30,6 +30,15 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     env:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/commitmentos
       BETTER_AUTH_SECRET: commitmentos-ci-only-secret-do-not-use-in-production
@@ -39,6 +48,7 @@ jobs:
       SMTP_USER: commitmentos-ci
       SMTP_PASSWORD: commitmentos-ci-smtp-password
       EMAIL_FROM: noreply@commitmentos.test
+      REDIS_URL: redis://localhost:6379
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -78,3 +88,6 @@ jobs:
 
       - name: Authentication, workspace, and commitment integration tests
         run: npm run test:integration
+
+      - name: PostgreSQL and Redis/BullMQ job integration tests
+        run: npm run test:jobs-integration

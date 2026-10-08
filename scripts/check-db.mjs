@@ -46,6 +46,20 @@ try {
             WHERE app_schema.nspname = 'commitmentos'
               AND app_type.typname = expected.name
           )
+          WHEN expected.kind = 'column' THEN EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'commitmentos'
+              AND table_name = split_part(expected.name, '.', 1)
+              AND column_name = split_part(expected.name, '.', 2)
+          )
+          WHEN expected.kind = 'constraint' THEN EXISTS (
+            SELECT 1
+            FROM pg_constraint AS app_constraint
+            JOIN pg_class AS app_table ON app_table.oid = app_constraint.conrelid
+            JOIN pg_namespace AS app_schema ON app_schema.oid = app_table.relnamespace
+            WHERE app_schema.nspname = 'commitmentos'
+              AND app_constraint.conname = expected.name
+          )
           WHEN expected.kind = 'trigger' THEN EXISTS (
             SELECT 1
             FROM pg_trigger AS app_trigger
@@ -61,11 +75,34 @@ try {
         ('table', 'session'),
         ('table', 'user'),
         ('table', 'verification'),
+        ('table', 'rate_limit'),
+        ('table', 'email_verification_token_use'),
+        ('column', 'rate_limit.key'),
+        ('column', 'rate_limit.count'),
+        ('column', 'rate_limit.last_request'),
+        ('column', 'email_verification_token_use.token_hash'),
+        ('column', 'email_verification_token_use.expires_at'),
+        ('constraint', 'email_verification_token_use_hash_format'),
+        ('constraint', 'rate_limit_count_nonnegative'),
+        ('constraint', 'rate_limit_last_request_nonnegative'),
+        ('index', 'rate_limit_key_unique'),
+        ('index', 'email_verification_token_use_expires_at_idx'),
         ('table', 'workspace'),
         ('table', 'workspace_member'),
         ('table', 'workspace_audit_event'),
         ('table', 'commitment'),
         ('table', 'commitment_audit_event'),
+        ('table', 'async_job'),
+        ('table', 'background_worker_heartbeat'),
+        ('column', 'async_job.lease_expires_at'),
+        ('column', 'async_job.idempotency_key'),
+        ('column', 'async_job.correlation_id'),
+        ('column', 'async_job.payload'),
+        ('column', 'async_job.failure_class'),
+        ('column', 'background_worker_heartbeat.last_heartbeat_at'),
+        ('type', 'async_job_status'),
+        ('type', 'async_job_failure_class'),
+        ('type', 'background_worker_status'),
         ('type', 'workspace_role'),
         ('type', 'workspace_audit_event_type'),
         ('type', 'commitment_status'),
@@ -80,6 +117,13 @@ try {
         ('index', 'commitment_workspace_source_message_idx'),
         ('index', 'commitment_audit_event_workspace_commitment_occurred_idx'),
         ('index', 'commitment_audit_event_workspace_occurred_idx'),
+        ('index', 'async_job_workspace_idempotency_unique'),
+        ('index', 'async_job_status_available_at_idx'),
+        ('index', 'async_job_workspace_status_created_idx'),
+        ('index', 'background_worker_queue_heartbeat_idx'),
+        ('constraint', 'async_job_idempotency_key_format'),
+        ('constraint', 'async_job_correlation_id_format'),
+        ('constraint', 'async_job_error_code_format'),
         ('trigger', 'commitment_audit_event_no_update_or_delete'),
         ('trigger', 'commitment_audit_event_no_truncate'),
         ('trigger', 'workspace_audit_event_no_update_or_delete'),

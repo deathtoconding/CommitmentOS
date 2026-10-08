@@ -1,10 +1,12 @@
 import 'dotenv/config';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { createEmailVerificationToken } from 'better-auth/api';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { performance } from 'node:perf_hooks';
 import { setTimeout as delay } from 'node:timers/promises';
 import pg from 'pg';
 import { SMTPServer } from 'smtp-server';
@@ -21,8 +23,11 @@ if (!databaseUrl || !authSecret) {
 
 const email = `commitmentos.test+${randomUUID()}@example.com`;
 const secondEmail = `commitmentos.test+${randomUUID()}@example.com`;
-const testEmails = [email, secondEmail];
+const recoveryEmail = `commitmentos.test+${randomUUID()}@example.com`;
+const resetEmailDeliveryDelayMs = 500;
+const testEmails = [email, secondEmail, recoveryEmail];
 const password = 'CommitmentOS-Test-Password-2026!';
+const resetPassword = 'CommitmentOS-Recovered-Password-2026!';
 const smtpPort = Number(process.env.AUTH_E2E_SMTP_PORT ?? 3142);
 const smtpUser = process.env.SMTP_USER ?? 'commitmentos-integration';
 const smtpPassword = process.env.SMTP_PASSWORD ?? 'commitmentos-integration-smtp-secret';
@@ -30,7 +35,9 @@ const emailFrom = process.env.EMAIL_FROM ?? 'noreply@commitmentos.test';
 const emailTlsDirectory = mkdtempSync(join(tmpdir(), 'commitmentos-smtp-'));
 const emailTlsKeyPath = join(emailTlsDirectory, 'server.key');
 const emailTlsCertificatePath = join(emailTlsDirectory, 'server.crt');
-const verificationMessages = [];
+const emailMessages = [];
+const verificationTokenHashes = [];
+const rateLimitTestIps = ['198.51.100.71', '198.51.100.72', '198.51.100.73', '198.51.100.74'];
 const workspaceIds = [];
 const pool = new Pool({
   connectionString: databaseUrl,
@@ -84,11 +91,17 @@ async function startEmailServer() {
       stream.on('data', (chunk) => chunks.push(chunk));
       stream.on('error', callback);
       stream.on('end', () => {
-        verificationMessages.push({
-          recipient: session.envelope.rcptTo[0]?.address?.toLowerCase(),
-          raw: Buffer.concat(chunks).toString('utf8'),
-        });
-        callback(null, 'Accepted for integration delivery.');
+        const raw = Buffer.concat(chunks).toString('utf8');
+        void (async () => {
+          if (decodeQuotedPrintable(raw).includes('/api/auth/reset-password/')) {
+            await delay(resetEmailDeliveryDelayMs);
+          }
+          emailMessages.push({
+            recipient: session.envelope.rcptTo[0]?.address?.toLowerCase(),
+            raw,
+          });
+          callback(null, 'Accepted for integration delivery.');
+        })().catch(callback);
       });
     },
   });
@@ -108,44 +121,87 @@ function decodeQuotedPrintable(value) {
     .replace(/=([0-9a-f]{2})/gi, (_match, hex) => String.fromCharCode(Number.parseInt(hex, 16)));
 }
 
-async function verificationLinkFor(recipient) {
+function storedVerificationIdentifier(identifier) {
+  return createHash('sha256').update(identifier).digest('base64url');
+}
+
+async function emailLinkFor(recipient, pathFragment) {
   for (let attempt = 0; attempt < 40; attempt += 1) {
-    const message = [...verificationMessages]
+    const message = [...emailMessages]
       .reverse()
       .find((delivery) => delivery.recipient === recipient.toLowerCase());
     const decodedMessage = message ? decodeQuotedPrintable(message.raw) : '';
     const links = decodedMessage.match(/https?:\/\/[^\s<>"']+/g) ?? [];
     const link = links
       .map((value) => value.replace(/[),.]+$/, ''))
-      .find((value) => value.includes('/verify-email?'));
+      .find((value) => value.includes(pathFragment));
     if (link) return link;
     await delay(50);
   }
 
-  throw new Error(`No verification link was delivered to ${recipient}.`);
+  throw new Error(`No matching authentication link was delivered to ${recipient}.`);
 }
 
-async function followVerificationLink(recipient) {
+async function verificationLinkFor(recipient) {
+  return emailLinkFor(recipient, '/verify-email?');
+}
+
+async function passwordResetLinkFor(recipient) {
+  return emailLinkFor(recipient, '/reset-password/');
+}
+
+async function followVerificationLink(recipient, { concurrent = false } = {}) {
   const verificationLink = await verificationLinkFor(recipient);
   const verificationUrl = new URL(verificationLink);
-  assert.ok(verificationUrl.searchParams.get('token'));
+  const token = verificationUrl.searchParams.get('token');
+  assert.ok(token);
   assert.equal(verificationUrl.searchParams.get('callbackURL'), '/login?verified=1');
-  const verificationResponse = await fetch(verificationUrl, { redirect: 'manual' });
-  if (verificationResponse.status !== 302) {
-    const responseBody = await verificationResponse.json().catch(() => ({}));
-    const callback = new URL(verificationLink).searchParams.get('callbackURL') ?? 'missing';
-    throw new Error(
-      `A valid email verification link should redirect to its configured callback (HTTP ${verificationResponse.status}, ${responseBody.code ?? 'unknown'}: ${responseBody.message ?? 'no message'}, callback ${callback}).`,
+
+  const redeem = () => fetch(verificationUrl, { redirect: 'manual' });
+  let verificationResponse;
+  if (concurrent) {
+    const concurrentResponses = await Promise.all([redeem(), redeem()]);
+    assert.deepEqual(
+      concurrentResponses.map((response) => response.status).sort((left, right) => left - right),
+      [302, 400],
+      'Concurrent verification attempts must allow exactly one successful redemption.',
     );
+    verificationResponse = concurrentResponses.find((response) => response.status === 302);
+    const replayResponse = concurrentResponses.find((response) => response.status === 400);
+    assert.ok(verificationResponse);
+    assert.ok(replayResponse);
+    const replayBody = await replayResponse.json();
+    assert.equal(replayBody.code, 'INVALID_TOKEN');
+  } else {
+    verificationResponse = await redeem();
+    if (verificationResponse.status !== 302) {
+      const responseBody = await verificationResponse.json().catch(() => ({}));
+      const callback = verificationUrl.searchParams.get('callbackURL') ?? 'missing';
+      throw new Error(
+        `A valid email verification link should redirect to its configured callback (HTTP ${verificationResponse.status}, ${responseBody.code ?? 'unknown'}: ${responseBody.message ?? 'no message'}, callback ${callback}).`,
+      );
+    }
   }
+
   const callback = new URL(verificationResponse.headers.get('location') ?? '', baseURL);
   assert.equal(callback.origin, baseURL);
   assert.equal(callback.pathname, '/login');
   assert.equal(callback.searchParams.get('verified'), '1');
+  verificationTokenHashes.push(createHash('sha256').update(token).digest('hex'));
 
   const verifiedPage = await appPageRequest('/login?verified=1');
   assert.equal(verifiedPage.status, 200);
   assert.match(await verifiedPage.text(), /Your email is verified/);
+  return { link: verificationLink, token };
+}
+
+async function assertVerificationReplayRejected(link) {
+  const response = await fetch(link, { redirect: 'manual' });
+  assert.equal(response.status, 400, 'A used email verification link must be rejected.');
+  assert.equal(response.headers.get('referrer-policy'), 'no-referrer');
+  assert.match(response.headers.get('cache-control') ?? '', /no-store/i);
+  const body = await response.json();
+  assert.equal(body.code, 'INVALID_TOKEN');
 }
 
 async function cleanupEmailServer() {
@@ -201,12 +257,13 @@ async function waitForServer() {
   throw new Error(`Timed out waiting for the Next.js test server. ${serverOutput}`);
 }
 
-function authRequest(path, body, cookie) {
+function authRequest(path, body, cookie, extraHeaders = {}) {
   return fetch(`${baseURL}/api/auth/${path}`, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
       origin: baseURL,
+      ...extraHeaders,
       ...(cookie ? { cookie } : {}),
     },
     body: JSON.stringify(body),
@@ -442,6 +499,285 @@ async function testCommitmentPersistence({ workspaceId, otherWorkspaceId, userId
   return { populatedId, sparseId };
 }
 
+async function testPasswordRecovery() {
+  const forgotPasswordPage = await appPageRequest('/forgot-password');
+  assert.equal(forgotPasswordPage.status, 200);
+  assert.equal(forgotPasswordPage.headers.get('referrer-policy'), 'no-referrer');
+  assert.match(forgotPasswordPage.headers.get('cache-control') ?? '', /no-store/i);
+  const forgotPasswordBody = await forgotPasswordPage.text();
+  assert.match(forgotPasswordBody, /Recover your account/);
+  assert.match(forgotPasswordBody, /Send reset link/);
+  assert.match(forgotPasswordBody, /does not confirm whether an account is registered/);
+
+  const resetLandingPage = await appPageRequest('/reset-password?token=private-page-token');
+  assert.equal(resetLandingPage.status, 200);
+  assert.equal(resetLandingPage.headers.get('referrer-policy'), 'no-referrer');
+  assert.match(resetLandingPage.headers.get('cache-control') ?? '', /no-store/i);
+  assert.match(await resetLandingPage.text(), /Choose a new password/);
+  const invalidResetLandingPage = await appPageRequest('/reset-password?error=INVALID_TOKEN');
+  assert.equal(invalidResetLandingPage.status, 200);
+  assert.match(await invalidResetLandingPage.text(), /Reset link unavailable/);
+
+  const recoveryRegistration = await authRequest('sign-up/email', {
+    name: 'Password Recovery Integration User',
+    email: recoveryEmail,
+    password,
+    callbackURL: '/login?verified=1',
+  });
+  assert.ok(recoveryRegistration.ok, 'A password recovery fixture account should register.');
+  const recoveryUser = (await recoveryRegistration.json()).user;
+  assert.equal(recoveryUser.emailVerified, false);
+  await followVerificationLink(recoveryEmail);
+
+  const recoveryLogin = await authRequest('sign-in/email', { email: recoveryEmail, password });
+  assert.ok(recoveryLogin.ok, 'The verified recovery fixture should be able to sign in.');
+  const recoveryCookie = readCookieHeader(recoveryLogin);
+  const sessionBeforeReset = await pool.query(
+    'SELECT COUNT(*)::int AS count FROM commitmentos.session WHERE user_id = $1',
+    [recoveryUser.id],
+  );
+  assert.equal(sessionBeforeReset.rows[0].count, 1);
+
+  const recoveryRateLimitIp = rateLimitTestIps[0];
+  const requestResetFor = (targetEmail) =>
+    authRequest(
+      'request-password-reset',
+      { email: targetEmail, redirectTo: '/reset-password' },
+      undefined,
+      { 'x-forwarded-for': recoveryRateLimitIp },
+    );
+  const previousResetEmails = emailMessages.filter(
+    (message) =>
+      message.recipient === recoveryEmail &&
+      decodeQuotedPrintable(message.raw).includes('/api/auth/reset-password/'),
+  ).length;
+
+  const knownAddressStartedAt = performance.now();
+  const knownAddressRequest = await requestResetFor(recoveryEmail);
+  const knownAddressDurationMs = performance.now() - knownAddressStartedAt;
+  const knownAddressBody = await knownAddressRequest.json();
+  assert.equal(knownAddressRequest.status, 200);
+  const resetEmailsBeforeAsyncDelivery = emailMessages.filter(
+    (message) =>
+      message.recipient === recoveryEmail &&
+      decodeQuotedPrintable(message.raw).includes('/api/auth/reset-password/'),
+  ).length;
+  assert.equal(
+    resetEmailsBeforeAsyncDelivery,
+    previousResetEmails,
+    'The recovery response must not wait for SMTP delivery.',
+  );
+  const unknownAddressStartedAt = performance.now();
+  const unknownAddressRequest = await requestResetFor(`missing+${randomUUID()}@example.com`);
+  const unknownAddressDurationMs = performance.now() - unknownAddressStartedAt;
+  const unknownAddressBody = await unknownAddressRequest.json();
+  assert.equal(unknownAddressRequest.status, 200);
+  assert.ok(
+    Math.abs(knownAddressDurationMs - unknownAddressDurationMs) < resetEmailDeliveryDelayMs * 0.8,
+    `Known- and unknown-account reset responses had observably different timing (${Math.round(knownAddressDurationMs)}ms vs ${Math.round(unknownAddressDurationMs)}ms).`,
+  );
+  assert.deepEqual(
+    knownAddressBody,
+    unknownAddressBody,
+    'Known and unknown addresses must receive exactly the same password-reset response.',
+  );
+  assert.equal(knownAddressBody.status, true);
+  assert.match(knownAddressBody.message, /If this email exists/);
+
+  let resetEmailsAfterLookup = [];
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    resetEmailsAfterLookup = emailMessages.filter(
+      (message) =>
+        message.recipient === recoveryEmail &&
+        decodeQuotedPrintable(message.raw).includes('/api/auth/reset-password/'),
+    );
+    if (resetEmailsAfterLookup.length >= previousResetEmails + 1) break;
+    await delay(50);
+  }
+  assert.equal(
+    resetEmailsAfterLookup.length,
+    previousResetEmails + 1,
+    'A reset message should be sent only for a known account.',
+  );
+
+  const thirdAddressRequest = await requestResetFor(`missing+${randomUUID()}@example.com`);
+  assert.equal(thirdAddressRequest.status, 200);
+  assert.deepEqual(await thirdAddressRequest.json(), knownAddressBody);
+  const rateLimitedAddressRequest = await requestResetFor(`missing+${randomUUID()}@example.com`);
+  assert.equal(rateLimitedAddressRequest.status, 429);
+  assert.ok(Number(rateLimitedAddressRequest.headers.get('x-retry-after')) > 0);
+
+  const persistedRequestLimit = await pool.query(
+    `SELECT count
+     FROM commitmentos.rate_limit
+     WHERE key LIKE $1
+     LIMIT 1`,
+    [`${recoveryRateLimitIp}|%request-password-reset`],
+  );
+  assert.equal(
+    persistedRequestLimit.rows[0]?.count,
+    3,
+    'Password-reset throttling must be shared through PostgreSQL rather than process memory.',
+  );
+
+  const redirectAttempt = await authRequest(
+    'request-password-reset',
+    { email: recoveryEmail, redirectTo: 'https://attacker.example/reset' },
+    undefined,
+    { 'x-forwarded-for': rateLimitTestIps[1] },
+  );
+  assert.ok(
+    [400, 403].includes(redirectAttempt.status),
+    'Password-reset email callbacks must reject untrusted redirect origins.',
+  );
+
+  const oversizedResetRequest = await authRequest(
+    'request-password-reset',
+    { email: recoveryEmail, padding: 'x'.repeat(300_000) },
+    undefined,
+    { 'x-forwarded-for': rateLimitTestIps[2] },
+  );
+  assert.equal(oversizedResetRequest.status, 413);
+
+  const resetLink = await passwordResetLinkFor(recoveryEmail);
+  const resetUrl = new URL(resetLink);
+  assert.equal(resetUrl.origin, baseURL);
+  assert.match(resetUrl.pathname, /^\/api\/auth\/reset-password\//);
+  assert.equal(resetUrl.searchParams.get('callbackURL'), '/reset-password');
+  const resetToken = resetUrl.pathname.split('/').at(-1);
+  assert.ok(resetToken);
+  const resetIdentifier = storedVerificationIdentifier(`reset-password:${resetToken}`);
+  const storedResetToken = await pool.query(
+    'SELECT identifier FROM commitmentos.verification WHERE identifier = $1',
+    [resetIdentifier],
+  );
+  assert.equal(storedResetToken.rows.length, 1);
+  assert.equal(storedResetToken.rows[0].identifier, resetIdentifier);
+  assert.notEqual(storedResetToken.rows[0].identifier, `reset-password:${resetToken}`);
+
+  const untrustedResetCallback = new URL(resetUrl);
+  untrustedResetCallback.searchParams.set('callbackURL', 'https://attacker.example/reset');
+  const rejectedResetCallback = await fetch(untrustedResetCallback, { redirect: 'manual' });
+  assert.ok(
+    [400, 403].includes(rejectedResetCallback.status),
+    'Reset links must not permit an untrusted callback origin.',
+  );
+
+  const expiredResetToken = randomUUID().replaceAll('-', '');
+  const expiredResetIdentifier = storedVerificationIdentifier(
+    `reset-password:${expiredResetToken}`,
+  );
+  const expiredResetAt = new Date(Date.now() - 60_000);
+  await pool.query(
+    `INSERT INTO commitmentos.verification (
+       id, identifier, value, expires_at, created_at, updated_at
+     ) VALUES ($1, $2, $3, $4, now(), now())`,
+    [randomUUID(), expiredResetIdentifier, recoveryUser.id, expiredResetAt],
+  );
+  const expiredResetUrl = new URL(`/api/auth/reset-password/${expiredResetToken}`, baseURL);
+  expiredResetUrl.searchParams.set('callbackURL', '/reset-password');
+  const expiredResetCallback = await fetch(expiredResetUrl, { redirect: 'manual' });
+  assert.equal(expiredResetCallback.status, 302);
+  const expiredResetLanding = new URL(expiredResetCallback.headers.get('location') ?? '', baseURL);
+  assert.equal(expiredResetLanding.pathname, '/reset-password');
+  assert.equal(expiredResetLanding.searchParams.get('error'), 'INVALID_TOKEN');
+  assert.equal(expiredResetLanding.searchParams.has('token'), false);
+
+  const expiredResetAttempt = await authRequest('reset-password', {
+    newPassword: resetPassword,
+    token: expiredResetToken,
+  });
+  assert.equal(expiredResetAttempt.status, 400);
+  assert.equal((await expiredResetAttempt.json()).code, 'INVALID_TOKEN');
+  const expiredResetRow = await pool.query(
+    'SELECT COUNT(*)::int AS count FROM commitmentos.verification WHERE identifier = $1',
+    [expiredResetIdentifier],
+  );
+  assert.equal(expiredResetRow.rows[0].count, 0);
+
+  const resetCallback = await fetch(resetUrl, { redirect: 'manual' });
+  assert.equal(resetCallback.status, 302);
+  assert.equal(resetCallback.headers.get('referrer-policy'), 'no-referrer');
+  assert.match(resetCallback.headers.get('cache-control') ?? '', /no-store/i);
+  const resetLanding = new URL(resetCallback.headers.get('location') ?? '', baseURL);
+  assert.equal(resetLanding.origin, baseURL);
+  assert.equal(resetLanding.pathname, '/reset-password');
+  assert.equal(resetLanding.searchParams.get('token'), resetToken);
+  const validResetPage = await appPageRequest(resetLanding.pathname + resetLanding.search);
+  assert.equal(validResetPage.status, 200);
+  assert.equal(validResetPage.headers.get('referrer-policy'), 'no-referrer');
+  assert.match(validResetPage.headers.get('cache-control') ?? '', /no-store/i);
+  assert.match(await validResetPage.text(), /Choose a new password/);
+
+  const unknownToken = randomUUID().replaceAll('-', '');
+  const unknownTokenReset = await authRequest('reset-password', {
+    newPassword: resetPassword,
+    token: unknownToken,
+  });
+  assert.equal(unknownTokenReset.status, 400);
+  assert.equal((await unknownTokenReset.json()).code, 'INVALID_TOKEN');
+
+  const resetResponse = await authRequest('reset-password', {
+    newPassword: resetPassword,
+    token: resetToken,
+  });
+  assert.equal(resetResponse.status, 200, 'A valid reset link should change the account password.');
+  assert.deepEqual(await resetResponse.json(), { status: true });
+  const consumedResetRow = await pool.query(
+    'SELECT COUNT(*)::int AS count FROM commitmentos.verification WHERE identifier = $1',
+    [resetIdentifier],
+  );
+  assert.equal(consumedResetRow.rows[0].count, 0, 'Password reset must consume the token.');
+  const sessionsAfterReset = await pool.query(
+    'SELECT COUNT(*)::int AS count FROM commitmentos.session WHERE user_id = $1',
+    [recoveryUser.id],
+  );
+  assert.equal(
+    sessionsAfterReset.rows[0].count,
+    0,
+    'Password reset must revoke existing sessions.',
+  );
+
+  const replayedReset = await authRequest('reset-password', {
+    newPassword: 'CommitmentOS-Another-Password-2026!',
+    token: resetToken,
+  });
+  assert.equal(replayedReset.status, 400, 'A password reset token must be single-use.');
+  assert.equal((await replayedReset.json()).code, 'INVALID_TOKEN');
+  const previousSessionRequest = await workspaceRequest('/api/workspaces', {
+    cookie: recoveryCookie,
+  });
+  assert.equal(previousSessionRequest.status, 401);
+
+  const oldPasswordLogin = await authRequest('sign-in/email', {
+    email: recoveryEmail,
+    password,
+  });
+  assert.equal(oldPasswordLogin.ok, false, 'The previous password must stop working after reset.');
+  const recoveredLogin = await authRequest('sign-in/email', {
+    email: recoveryEmail,
+    password: resetPassword,
+  });
+  assert.ok(recoveredLogin.ok, 'The new password should sign in successfully.');
+
+  const resetRateLimitIp = rateLimitTestIps[3];
+  const resetAbuseResponses = await Promise.all(
+    Array.from({ length: 6 }, () =>
+      authRequest(
+        'reset-password',
+        { newPassword: resetPassword, token: randomUUID().replaceAll('-', '') },
+        undefined,
+        { 'x-forwarded-for': resetRateLimitIp },
+      ),
+    ),
+  );
+  assert.deepEqual(
+    resetAbuseResponses.map((response) => response.status).sort((left, right) => left - right),
+    [400, 400, 400, 400, 400, 429],
+    'Repeated invalid reset attempts must be rate-limited.',
+  );
+}
+
 async function cleanupServer() {
   if (!server || server.exitCode !== null) return;
 
@@ -467,6 +803,17 @@ try {
   assert.equal(anonymousNestedPage.status, 307);
   assert.match(anonymousNestedPage.headers.get('location') ?? '', /\/login$/);
 
+  const clientClaimedVerifiedRegistration = await authRequest('sign-up/email', {
+    name: 'Test User',
+    email,
+    password,
+    emailVerified: true,
+  });
+  assert.equal(
+    clientClaimedVerifiedRegistration.status,
+    400,
+    'Registration must reject client-supplied email verification state.',
+  );
   const invalidRegistration = await authRequest('sign-up/email', {
     name: 'Test User',
     email,
@@ -567,7 +914,22 @@ try {
     [registrationResult.user.id],
   );
   assert.equal(unverifiedAccountBeforeVerification.rows[0]?.email_verified, false);
-  await followVerificationLink(email);
+  const successfulVerification = await followVerificationLink(email);
+  const initialVerificationToken = new URL(initialVerificationLink).searchParams.get('token');
+  assert.ok(initialVerificationToken);
+  assert.notEqual(
+    successfulVerification.token,
+    initialVerificationToken,
+    'The sign-in resend should issue a distinct verification token.',
+  );
+  await assertVerificationReplayRejected(successfulVerification.link);
+
+  // A different still-valid token must also become single-use after the account is verified.
+  const previouslyIssuedLinkResponse = await fetch(initialVerificationLink, { redirect: 'manual' });
+  assert.equal(previouslyIssuedLinkResponse.status, 302);
+  verificationTokenHashes.push(createHash('sha256').update(initialVerificationToken).digest('hex'));
+  await assertVerificationReplayRejected(initialVerificationLink);
+
   const verifiedAccount = await pool.query(
     'SELECT email_verified FROM commitmentos."user" WHERE id = $1',
     [registrationResult.user.id],
@@ -856,7 +1218,37 @@ try {
     [secondRegistrationResult.user.id],
   );
   assert.equal(secondUnverifiedAccount.rows[0]?.email_verified, false);
-  await followVerificationLink(secondEmail);
+
+  const expiredVerificationToken = await createEmailVerificationToken(
+    authSecret,
+    secondEmail,
+    undefined,
+    -1,
+  );
+  const expiredVerificationUrl = new URL('/api/auth/verify-email', baseURL);
+  expiredVerificationUrl.searchParams.set('token', expiredVerificationToken);
+  expiredVerificationUrl.searchParams.set('callbackURL', '/login?verified=1');
+  const expiredVerificationResponse = await fetch(expiredVerificationUrl, { redirect: 'manual' });
+  assert.equal(expiredVerificationResponse.status, 302);
+  const expiredVerificationCallback = new URL(
+    expiredVerificationResponse.headers.get('location') ?? '',
+    baseURL,
+  );
+  assert.equal(expiredVerificationCallback.searchParams.get('error'), 'TOKEN_EXPIRED');
+  const expiredVerificationMarker = await pool.query(
+    `SELECT COUNT(*)::int AS count
+     FROM commitmentos.email_verification_token_use
+     WHERE token_hash = $1`,
+    [createHash('sha256').update(expiredVerificationToken).digest('hex')],
+  );
+  assert.equal(expiredVerificationMarker.rows[0].count, 0);
+  const secondAccountStillUnverified = await pool.query(
+    'SELECT email_verified FROM commitmentos."user" WHERE id = $1',
+    [secondRegistrationResult.user.id],
+  );
+  assert.equal(secondAccountStillUnverified.rows[0]?.email_verified, false);
+
+  await followVerificationLink(secondEmail, { concurrent: true });
   const secondVerifiedAccount = await pool.query(
     'SELECT email_verified FROM commitmentos."user" WHERE id = $1',
     [secondRegistrationResult.user.id],
@@ -1916,7 +2308,8 @@ try {
   );
   assert.equal(remainingSessions.rows[0].count, 0, 'Logout must invalidate the database session.');
 
-  console.log('Authentication, workspace, and commitment integration checks passed.');
+  await testPasswordRecovery();
+  console.log('Authentication, workspace, commitment, and recovery integration checks passed.');
 } catch (error) {
   const stackFrame =
     error instanceof Error
@@ -1939,6 +2332,15 @@ try {
   const cleanupClient = await pool.connect();
   try {
     await cleanupClient.query('BEGIN');
+    await cleanupClient.query(
+      'DELETE FROM commitmentos.email_verification_token_use WHERE token_hash = ANY($1::text[])',
+      [verificationTokenHashes],
+    );
+    await cleanupClient.query(
+      `DELETE FROM commitmentos.rate_limit
+       WHERE split_part(key, '|', 1) = ANY($1::text[])`,
+      [rateLimitTestIps],
+    );
     // The test database contains only disposable fixtures; preserve production immutability rules.
     await cleanupClient.query(
       'ALTER TABLE commitmentos.commitment_audit_event DISABLE TRIGGER USER',

@@ -17,6 +17,9 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
         </p>
       ) : null}
       <AuthForm mode="login" />
+      <p className="auth-switch">
+        <Link href="/forgot-password">Forgot your password?</Link>
+      </p>
       <Link className="back-link" href="/">
         Back to CommitmentOS
       </Link>

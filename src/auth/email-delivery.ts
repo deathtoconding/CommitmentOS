@@ -1,5 +1,6 @@
 import 'server-only';
 import { readFileSync } from 'node:fs';
+import { after } from 'next/server';
 import nodemailer from 'nodemailer';
 import { getAuthEnvironment } from './environment';
 import { getEmailDeliveryEnvironment } from './email-delivery-environment';
@@ -26,17 +27,23 @@ const smtpTransport = nodemailer.createTransport({
   debug: false,
 });
 
+function getTrustedAuthenticationUrl(url: string, purpose: string): URL {
+  const authenticationUrl = new URL(url);
+  if (
+    !['http:', 'https:'].includes(authenticationUrl.protocol) ||
+    authenticationUrl.origin !== getAuthEnvironment().baseURL
+  ) {
+    throw new Error(`${purpose} URL must use the configured authentication origin.`);
+  }
+
+  return authenticationUrl;
+}
+
 export async function sendVerificationEmail(data: {
   user: { email: string; name: string };
   url: string;
 }): Promise<void> {
-  const verificationUrl = new URL(data.url);
-  if (
-    !['http:', 'https:'].includes(verificationUrl.protocol) ||
-    verificationUrl.origin !== getAuthEnvironment().baseURL
-  ) {
-    throw new Error('Email verification URL must use the configured authentication origin.');
-  }
+  const verificationUrl = getTrustedAuthenticationUrl(data.url, 'Email verification');
 
   await smtpTransport.sendMail({
     from: emailEnvironment.from,
@@ -50,5 +57,40 @@ export async function sendVerificationEmail(data: {
       '',
       'If you did not create this account, you can ignore this message.',
     ].join('\n'),
+  });
+}
+
+export async function sendPasswordResetEmail(data: {
+  user: { email: string };
+  url: string;
+}): Promise<void> {
+  const resetUrl = getTrustedAuthenticationUrl(data.url, 'Password reset');
+  const message = {
+    from: emailEnvironment.from,
+    to: data.user.email,
+    subject: 'Reset your CommitmentOS password',
+    text: [
+      'A request was made to reset the password for your CommitmentOS account.',
+      '',
+      'Use this link within one hour to choose a new password. The link can only be used once:',
+      resetUrl.toString(),
+      '',
+      'If you did not request a password reset, you can ignore this message.',
+    ].join('\n'),
+  };
+
+  // Do not let SMTP latency reveal whether the requested address has an account.
+  after(async () => {
+    try {
+      await smtpTransport.sendMail(message);
+    } catch {
+      console.error(
+        JSON.stringify({
+          timestamp: new Date().toISOString(),
+          service: 'commitmentos-auth',
+          event: 'password_reset_email_delivery_failed',
+        }),
+      );
+    }
   });
 }
