@@ -214,12 +214,19 @@ async function recordHeartbeat(
   await pool.query(
     `INSERT INTO commitmentos.background_worker_heartbeat (
        worker_id, queue_name, status, started_at, last_heartbeat_at, stopped_at, last_error_code
-     ) VALUES ($1, $2, $3, now(), now(), CASE WHEN $3 = 'STOPPED' THEN now() ELSE NULL END, NULL)
+     ) VALUES (
+       $1, $2, $3, now(), now(),
+       CASE WHEN $3::commitmentos.background_worker_status = 'STOPPED' THEN now() ELSE NULL END,
+       NULL
+     )
      ON CONFLICT (worker_id) DO UPDATE SET
        queue_name = EXCLUDED.queue_name,
        status = EXCLUDED.status,
        last_heartbeat_at = now(),
-       stopped_at = CASE WHEN EXCLUDED.status = 'STOPPED' THEN now() ELSE NULL END,
+       stopped_at = CASE
+         WHEN EXCLUDED.status = 'STOPPED'::commitmentos.background_worker_status THEN now()
+         ELSE NULL
+       END,
        last_error_code = NULL`,
     [workerId, queueName, status],
   );
