@@ -552,7 +552,7 @@ try {
 
   const appSectionCases = [
     ['/app', 'Your overview is ready'],
-    ['/app/inbox', 'Your inbox is ready'],
+    ['/app/inbox', 'No commitments yet.'],
     ['/app/commitments', 'No commitments to show yet'],
     ['/app/integrations', 'No integrations are configured here'],
     ['/app/settings', 'Your signed-in profile'],
@@ -605,6 +605,35 @@ try {
     otherWorkspaceId: secondWorkspace.id,
     userId: registrationResult.user.id,
   });
+
+  const firstWorkspaceInbox = await appPageRequest(
+    `/app/inbox?workspaceId=${firstWorkspace.id}`,
+    cookie,
+  );
+  assert.equal(firstWorkspaceInbox.status, 200);
+  const firstWorkspaceInboxBody = await firstWorkspaceInbox.text();
+  assert.match(firstWorkspaceInboxBody, /Send the revised proposal/);
+  assert.ok(firstWorkspaceInboxBody.includes('I will send the revised proposal.'));
+  assert.match(firstWorkspaceInboxBody, /Assigned/);
+  assert.match(firstWorkspaceInboxBody, /Customer Example/);
+  assert.match(firstWorkspaceInboxBody, /02 Nov 2026, 10:30/);
+  assert.doesNotMatch(firstWorkspaceInboxBody, /I will send the revised proposal by Monday/);
+  assert.doesNotMatch(firstWorkspaceInboxBody, /provider-message-123/);
+  assert.ok(!firstWorkspaceInboxBody.includes('customer@example.test'));
+  assert.match(firstWorkspaceInbox.headers.get('cache-control') ?? '', /no-store/i);
+
+  const secondWorkspaceInbox = await appPageRequest(
+    `/app/inbox?workspaceId=${secondWorkspace.id}`,
+    cookie,
+  );
+  assert.equal(secondWorkspaceInbox.status, 200);
+  const secondWorkspaceInboxBody = await secondWorkspaceInbox.text();
+  assert.match(secondWorkspaceInboxBody, /Follow up/);
+  assert.ok(secondWorkspaceInboxBody.includes('I will follow up.'));
+  assert.match(secondWorkspaceInboxBody, /Unassigned/);
+  assert.match(secondWorkspaceInboxBody, /No deadline set/);
+  assert.doesNotMatch(secondWorkspaceInboxBody, /Send the revised proposal/);
+  assert.match(secondWorkspaceInbox.headers.get('cache-control') ?? '', /no-store/i);
 
   const firstCommitmentsPath = `/api/workspaces/${firstWorkspace.id}/commitments`;
   const apiCommitmentCollectionAnonymous = await workspaceRequest(firstCommitmentsPath);

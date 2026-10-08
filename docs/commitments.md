@@ -55,6 +55,12 @@ Each event records the workspace, commitment, authenticated actor, type, occurre
 
 PostgreSQL triggers reject `UPDATE`, `DELETE`, and `TRUNCATE` on audit events. The workspace-scoped read endpoint is `GET /api/workspaces/:id/commitments/:commitmentId/audit-events`, available to workspace members. It uses a validated keyset cursor and a page size of 1–100 (default 50), and returns 404 for missing or cross-workspace commitments. The `0004_commitment_audit_events` migration also prevents deleting users, workspaces, or commitments referenced by immutable audit history.
 
+## Commitment inbox (COM-113)
+
+The authenticated `/app/inbox` page resolves the active workspace against memberships for the current server-verified session before querying commitments. It uses the authorized workspace ID rather than treating a query-string workspace ID or client state as authority. The list is ordered newest first by the existing workspace-scoped query. It presents the commitment/action text, lifecycle status, whether an owner is assigned, and the deadline when present; unknown deadlines and owners remain explicitly unknown. The inbox does not render source excerpts, provider message IDs, counterparty email addresses, completion evidence, or other message-body content. Empty workspaces receive a dedicated empty state, and the app's loading/error boundaries cover pending and failed loads.
+
+Deadline display uses the stored IANA timezone when valid, including timezone-database daylight-saving transitions. If the stored timezone is missing or invalid, the exact instant is displayed in UTC; the UI does not infer a local timezone or deadline.
+
 ## Indexes
 
 Indexes support workspace/status/due-date listing, workspace/owner lookup, and workspace/source-message lookup. The migration is `drizzle/0003_commitment_aggregate.sql`.

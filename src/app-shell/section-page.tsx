@@ -2,6 +2,8 @@ import { headers } from 'next/headers';
 import { notFound, redirect } from 'next/navigation';
 import type { ReactNode } from 'react';
 import { getAuthenticatedSession } from '@/auth/session';
+import { CommitmentInbox } from '@/commitments/commitment-inbox';
+import { listWorkspaceCommitments } from '@/commitments/service';
 import { resolveActiveWorkspace } from '@/workspaces/active-workspace';
 import { listUserWorkspaces } from '@/workspaces/queries';
 
@@ -34,12 +36,11 @@ const sectionCopy: Record<Exclude<AppSection, 'settings'>, SectionCopy> = {
     icon: 'dashboard',
   },
   inbox: {
-    eyebrow: 'Inbox',
-    title: 'A place for incoming commitments.',
-    description: 'Review and organize commitments from your business conversations.',
-    emptyTitle: 'Your inbox is ready.',
-    emptyDescription:
-      'The commitment-review workflow will appear here when it is available for this workspace.',
+    eyebrow: 'Commitment inbox',
+    title: 'Every commitment, in one place.',
+    description: 'Review the commitments recorded for this workspace.',
+    emptyTitle: 'No commitments yet.',
+    emptyDescription: 'Commitments recorded for this workspace will appear here.',
     icon: 'inbox',
   },
   commitments: {
@@ -245,6 +246,8 @@ export async function AppSectionPage({
     notFound();
   }
   const workspace = resolution.status === 'selected' ? resolution.workspace : null;
+  const commitments =
+    section === 'inbox' && workspace ? await listWorkspaceCommitments(workspace.id) : [];
 
   const pageTitle = section === 'settings' ? 'Settings' : sectionCopy[section].title;
   const pageDescription =
@@ -274,6 +277,8 @@ export async function AppSectionPage({
           name={currentSession.user.name}
           workspace={workspace ? { name: workspace.name, role: workspace.role } : null}
         />
+      ) : section === 'inbox' && workspace ? (
+        <CommitmentInbox commitments={commitments} />
       ) : workspace ? (
         <EmptyState copy={sectionCopy[section]} />
       ) : (

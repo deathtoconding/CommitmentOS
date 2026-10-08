@@ -920,6 +920,174 @@ a:focus-visible {
   line-height: 1.65;
 }
 
+.commitment-inbox-panel {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.commitment-inbox-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.25rem 0.15rem;
+}
+
+.commitment-inbox-eyebrow {
+  margin: 0 0 0.25rem;
+  color: #789082;
+  font-size: 0.63rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.commitment-inbox-summary h2 {
+  margin: 0;
+  color: #294235;
+  font-size: 1.05rem;
+  letter-spacing: -0.025em;
+}
+
+.commitment-inbox-count {
+  display: inline-flex;
+  min-height: 2rem;
+  align-items: center;
+  padding: 0 0.75rem;
+  border: 1px solid #dce9df;
+  border-radius: 999px;
+  background: #f8fbf8;
+  color: #648070;
+  font-size: 0.72rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.commitment-inbox-list {
+  display: grid;
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.commitment-inbox-card {
+  padding: 1.25rem 1.35rem;
+  border: 1px solid #e1eae4;
+  border-radius: 1rem;
+  background: linear-gradient(135deg, #fff, #fbfdfb);
+  box-shadow: 0 8px 24px rgb(45 74 54 / 4%);
+}
+
+.commitment-inbox-card-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.commitment-inbox-card-copy {
+  min-width: 0;
+}
+
+.commitment-inbox-card-copy h3 {
+  margin: 0;
+  color: #2c4437;
+  font-size: 0.95rem;
+  letter-spacing: -0.015em;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.commitment-inbox-card-copy p {
+  margin: 0.35rem 0 0;
+  color: #718278;
+  font-size: 0.8rem;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.commitment-status-pill {
+  display: inline-flex;
+  min-height: 1.7rem;
+  flex: 0 0 auto;
+  align-items: center;
+  padding: 0 0.65rem;
+  border: 1px solid #dce9df;
+  border-radius: 999px;
+  background: #f1f7f2;
+  color: #54745f;
+  font-size: 0.64rem;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.commitment-status-pill[data-status='detected'] {
+  border-color: #dce4f1;
+  background: #f2f5fb;
+  color: #5f7193;
+}
+
+.commitment-status-pill[data-status='due_soon'],
+.commitment-status-pill[data-status='waiting'] {
+  border-color: #ecdfc0;
+  background: #fbf7ed;
+  color: #8c7440;
+}
+
+.commitment-status-pill[data-status='blocked'],
+.commitment-status-pill[data-status='overdue'] {
+  border-color: #efd7d1;
+  background: #fcf2ef;
+  color: #9c5b4c;
+}
+
+.commitment-status-pill[data-status='completed'] {
+  border-color: #dce9df;
+  background: #edf6ef;
+  color: #477357;
+}
+
+.commitment-status-pill[data-status='dismissed'] {
+  border-color: #e2e5e3;
+  background: #f4f5f4;
+  color: #78827c;
+}
+
+.commitment-inbox-metadata {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 2rem;
+  margin: 1rem 0 0;
+  padding-top: 0.85rem;
+  border-top: 1px solid #edf1ee;
+}
+
+.commitment-inbox-metadata > div {
+  display: grid;
+  gap: 0.22rem;
+  min-width: 6rem;
+}
+
+.commitment-inbox-metadata dt {
+  color: #8a9991;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.commitment-inbox-metadata dd {
+  margin: 0;
+  color: #4b6255;
+  font-size: 0.74rem;
+  line-height: 1.4;
+}
+
+.commitment-inbox-empty-state {
+  min-height: 19rem;
+}
+
 .app-page-footer {
   display: flex;
   align-items: center;
@@ -1315,6 +1483,18 @@ a:focus-visible {
   .app-empty-state {
     min-height: 19rem;
     padding: 2.2rem 1rem;
+  }
+
+  .commitment-inbox-card {
+    padding: 1rem;
+  }
+
+  .commitment-inbox-card-heading {
+    flex-direction: column;
+  }
+
+  .commitment-inbox-metadata {
+    gap: 0.8rem 1.2rem;
   }
 
   .settings-panels {
