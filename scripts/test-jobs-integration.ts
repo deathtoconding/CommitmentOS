@@ -239,7 +239,13 @@ try {
   const safeMessage = [databaseUrl, environment.redisUrl]
     .filter(Boolean)
     .reduce((result, secret) => result.replaceAll(secret, '[redacted]'), message);
-  console.error(`Background jobs integration checks failed (${code}): ${safeMessage}`);
+  const diagnostic = `Background jobs integration checks failed (${code}): ${safeMessage}`;
+  console.error(diagnostic);
+  const escapedDiagnostic = diagnostic
+    .replaceAll('%', '%25')
+    .replaceAll('\r', '%0D')
+    .replaceAll('\n', '%0A');
+  process.stdout.write(`::error title=Background jobs integration failure::${escapedDiagnostic}\n`);
   process.exitCode = 1;
 } finally {
   if (worker) {
