@@ -1341,7 +1341,10 @@ try {
 
   console.log('Authentication, workspace, and commitment integration checks passed.');
 } catch (error) {
-  const diagnostic = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+  const diagnostic =
+    error instanceof Error
+      ? (error.stack ?? `${error.name}: ${error.message}`).split('\n').slice(0, 3).join('\n')
+      : String(error);
   const escapedDiagnostic = diagnostic
     .replaceAll('%', '%25')
     .replaceAll('\r', '%0D')
