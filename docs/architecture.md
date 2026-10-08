@@ -15,7 +15,7 @@ Next.js application
   └── Drizzle database adapter
 
 PostgreSQL
-  ├── commitmentos schema (auth, workspace, membership, commitments, and durable job/outbox state)
+  ├── commitmentos schema (auth, workspace, membership, commitments, source-message identity metadata, and durable job/outbox state)
   └── source of truth for job idempotency, status, retries, leases, and worker heartbeats
 
 Redis / BullMQ
@@ -34,6 +34,7 @@ Background worker (separate process)
 - Workspace APIs use the reusable session, membership, and role guards; owner-only membership mutations also recheck authorization within a transaction and serialize on the workspace row. Future tenant-owned APIs must authorize before accessing workspace resources.
 - Provider-specific Gmail, Slack, and Calendar code will normalize into provider-neutral domain inputs.
 - AI responses will be treated as untrusted and validated before domain use.
+- Source-message identity is tenant-scoped and content-free in the current persistence model; message bodies require a separately approved retention and protection policy before they can be stored.
 - Database access will be isolated behind the database/domain application boundary.
 - Background work will not block HTTP requests.
 

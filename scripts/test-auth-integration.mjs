@@ -340,20 +340,30 @@ async function insertCommitment({
   completedAt = null,
   createdBy,
 }) {
+  if (sourceMessageId !== null) {
+    await pool.query(
+      `INSERT INTO commitmentos.source_message (id, workspace_id, legacy_reference)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (workspace_id, legacy_reference) DO NOTHING`,
+      [randomUUID(), workspaceId, sourceMessageId],
+    );
+  }
+
   return pool.query(
     `INSERT INTO commitmentos.commitment (
-       id, workspace_id, owner_user_id, source_message_id, commitment_text,
+       id, workspace_id, owner_user_id, source_message_id, source_message_record_id, commitment_text,
        normalized_action, counterparty_name, counterparty_email, due_at,
        due_timezone, status, confidence_score, source_excerpt,
        completion_evidence, completed_at, created_by
      ) VALUES (
-       $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
+       $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
      )`,
     [
       id,
       workspaceId,
       ownerUserId,
       sourceMessageId,
+      null,
       commitmentText,
       normalizedAction,
       counterpartyName,
@@ -418,6 +428,7 @@ async function testCommitmentPersistence({ workspaceId, otherWorkspaceId, userId
   assert.equal(populated.workspace_id, workspaceId);
   assert.equal(populated.owner_user_id, userId);
   assert.equal(populated.source_message_id, 'provider-message-123');
+  assert.equal(populated.source_message_record_id, null);
   assert.equal(populated.commitment_text, 'I will send the revised proposal.');
   assert.equal(populated.normalized_action, 'Send the revised proposal');
   assert.equal(populated.counterparty_name, 'Customer Example');
@@ -2386,6 +2397,14 @@ try {
       [workspaceIds, testEmails],
     );
     await cleanupClient.query('ALTER TABLE commitmentos.workspace_audit_event ENABLE TRIGGER USER');
+    await cleanupClient.query(
+      'DELETE FROM commitmentos.commitment WHERE workspace_id = ANY($1::text[])',
+      [workspaceIds],
+    );
+    await cleanupClient.query(
+      'DELETE FROM commitmentos.source_message WHERE workspace_id = ANY($1::text[])',
+      [workspaceIds],
+    );
     await cleanupClient.query('DELETE FROM commitmentos.workspace WHERE id = ANY($1::text[])', [
       workspaceIds,
     ]);

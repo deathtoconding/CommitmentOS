@@ -28,6 +28,7 @@ const auditedFields = [
   'normalizedAction',
   'ownerUserId',
   'sourceMessageId',
+  'sourceMessageRecordId',
   'counterpartyName',
   'counterpartyEmail',
   'dueAt',

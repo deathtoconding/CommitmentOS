@@ -46,6 +46,7 @@ describe('commitment PostgreSQL schema', () => {
     for (const name of [
       'owner_user_id',
       'source_message_id',
+      'source_message_record_id',
       'counterparty_name',
       'counterparty_email',
       'due_at',
@@ -60,17 +61,19 @@ describe('commitment PostgreSQL schema', () => {
   });
 
   it('defines foreign keys, validation constraints, and workspace-scoped indexes', () => {
-    expect(tableConfig.foreignKeys).toHaveLength(3);
+    expect(tableConfig.foreignKeys).toHaveLength(5);
     expect(tableConfig.checks.map((constraint) => constraint.name)).toEqual([
       'commitment_text_nonempty',
       'commitment_action_nonempty',
       'commitment_confidence_score_range',
+      'commitment_source_message_reference_xor',
     ]);
     expect(tableConfig.indexes.map((index) => index.config.name)).toEqual([
       'commitment_workspace_status_due_at_idx',
       'commitment_workspace_created_at_id_idx',
       'commitment_workspace_owner_user_id_idx',
       'commitment_workspace_source_message_idx',
+      'commitment_workspace_source_message_record_idx',
     ]);
     expect(tableConfig.uniqueConstraints.map((constraint) => constraint.name)).toContain(
       'commitment_workspace_id_id_unique',

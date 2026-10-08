@@ -19,6 +19,7 @@
     "test:watch": "vitest",
     "test:integration": "node scripts/test-auth-integration.mjs",
     "test:jobs-integration": "tsx scripts/test-jobs-integration.ts",
+    "test:source-messages-integration": "tsx scripts/test-source-messages-integration.ts",
     "worker": "tsx src/jobs/worker.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",

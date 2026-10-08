@@ -21,6 +21,7 @@ function commitmentIn(status: CommitmentStatus, overrides: Partial<Commitment> =
     workspaceId: 'workspace-1',
     ownerUserId: null,
     sourceMessageId: null,
+    sourceMessageRecordId: null,
     commitmentText: 'Send the revised proposal',
     normalizedAction: 'Send revised proposal',
     counterpartyName: null,

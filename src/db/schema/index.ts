@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm';
 import { COMMITMENT_AUDIT_EVENT_TYPES } from '../../commitments/audit-model';
 import { COMMITMENT_STATUSES } from '../../commitments/model';
 import { WORKSPACE_AUDIT_EVENT_TYPES } from '../../workspaces/audit-model';
+import { SOURCE_MESSAGE_PROVIDERS } from '../../source-messages/model';
 import {
   bigint,
   boolean,
@@ -175,6 +176,57 @@ export const workspaceAuditEvent = commitmentosSchema.table(
   ],
 );
 
+export const sourceProvider = commitmentosSchema.enum('source_provider', SOURCE_MESSAGE_PROVIDERS);
+
+export const sourceMessage = commitmentosSchema.table(
+  'source_message',
+  {
+    id: text('id').primaryKey(),
+    workspaceId: text('workspace_id')
+      .notNull()
+      .references(() => workspace.id, { onDelete: 'restrict' }),
+    provider: sourceProvider('provider'),
+    providerAccountId: text('provider_account_id'),
+    providerMessageId: text('provider_message_id'),
+    providerTimestamp: timestamp('provider_timestamp', { withTimezone: true, mode: 'date' }),
+    legacyReference: text('legacy_reference'),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).defaultNow().notNull(),
+  },
+  (table) => [
+    unique('source_message_workspace_id_unique').on(table.workspaceId, table.id),
+    unique('source_message_workspace_legacy_reference_unique').on(
+      table.workspaceId,
+      table.legacyReference,
+    ),
+    unique('source_message_provider_identity_unique').on(
+      table.workspaceId,
+      table.provider,
+      table.providerAccountId,
+      table.providerMessageId,
+    ),
+    check(
+      'source_message_identity_shape',
+      sql`(
+        ("provider" IS NULL AND "provider_account_id" IS NULL AND "provider_message_id" IS NULL
+          AND "provider_timestamp" IS NULL AND "legacy_reference" IS NOT NULL)
+        OR
+        ("provider" IS NOT NULL AND "provider_account_id" IS NOT NULL
+          AND "provider_message_id" IS NOT NULL AND "legacy_reference" IS NULL)
+      )`,
+    ),
+    check(
+      'source_message_provider_identifiers_nonempty',
+      sql`"provider" IS NULL OR (
+        length(btrim("provider_account_id")) BETWEEN 1 AND 1024
+        AND length(btrim("provider_message_id")) BETWEEN 1 AND 2048
+        AND length("provider_account_id") <= 1024
+        AND length("provider_message_id") <= 2048
+      )`,
+    ),
+    index('source_message_workspace_created_at_idx').on(table.workspaceId, table.createdAt),
+  ],
+);
+
 export const commitmentStatus = commitmentosSchema.enum('commitment_status', COMMITMENT_STATUSES);
 
 export const commitment = commitmentosSchema.table(
@@ -185,8 +237,9 @@ export const commitment = commitmentosSchema.table(
       .notNull()
       .references(() => workspace.id, { onDelete: 'cascade' }),
     ownerUserId: text('owner_user_id').references(() => user.id, { onDelete: 'set null' }),
-    // Message ingestion is modeled in a later increment; keep its external/source ID opaque here.
+    // Retained only for existing opaque references; new links use a workspace-scoped source record.
     sourceMessageId: text('source_message_id'),
+    sourceMessageRecordId: text('source_message_record_id'),
     commitmentText: text('commitment_text').notNull(),
     normalizedAction: text('normalized_action').notNull(),
     counterpartyName: text('counterparty_name'),
@@ -208,6 +261,20 @@ export const commitment = commitmentosSchema.table(
     check('commitment_text_nonempty', sql`length(btrim("commitment_text")) > 0`),
     check('commitment_action_nonempty', sql`length(btrim("normalized_action")) > 0`),
     check('commitment_confidence_score_range', sql`"confidence_score" BETWEEN 0 AND 1`),
+    check(
+      'commitment_source_message_reference_xor',
+      sql`"source_message_id" IS NULL OR "source_message_record_id" IS NULL`,
+    ),
+    foreignKey({
+      name: 'commitment_workspace_source_message_record_fk',
+      columns: [table.workspaceId, table.sourceMessageRecordId],
+      foreignColumns: [sourceMessage.workspaceId, sourceMessage.id],
+    }).onDelete('restrict'),
+    foreignKey({
+      name: 'commitment_workspace_legacy_source_message_fk',
+      columns: [table.workspaceId, table.sourceMessageId],
+      foreignColumns: [sourceMessage.workspaceId, sourceMessage.legacyReference],
+    }).onDelete('restrict'),
     unique('commitment_workspace_id_id_unique').on(table.workspaceId, table.id),
     index('commitment_workspace_status_due_at_idx').on(
       table.workspaceId,
@@ -221,6 +288,10 @@ export const commitment = commitmentosSchema.table(
     ),
     index('commitment_workspace_owner_user_id_idx').on(table.workspaceId, table.ownerUserId),
     index('commitment_workspace_source_message_idx').on(table.workspaceId, table.sourceMessageId),
+    index('commitment_workspace_source_message_record_idx').on(
+      table.workspaceId,
+      table.sourceMessageRecordId,
+    ),
   ],
 );
 

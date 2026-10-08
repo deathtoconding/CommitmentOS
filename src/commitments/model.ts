@@ -16,6 +16,7 @@ export type Commitment = {
   workspaceId: string;
   ownerUserId: string | null;
   sourceMessageId: string | null;
+  sourceMessageRecordId: string | null;
   commitmentText: string;
   normalizedAction: string;
   counterpartyName: string | null;

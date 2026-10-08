@@ -1,7 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { and, desc, eq, lt, or } from 'drizzle-orm';
 import { database } from '../db/client';
-import { commitment, commitmentAuditEvent, user, workspaceMember } from '../db/schema';
+import {
+  commitment,
+  commitmentAuditEvent,
+  sourceMessage,
+  user,
+  workspaceMember,
+} from '../db/schema';
 import {
   commitmentCreatedAuditEvent,
   createCommitmentAuditEvents,
@@ -28,6 +34,23 @@ async function hasWorkspaceMembership(
     .for('share');
 
   return membership ? 'member' : 'not-member';
+}
+
+async function hasWorkspaceSourceMessage(
+  transaction: CommitmentTransaction,
+  workspaceId: string,
+  sourceMessageRecordId: string,
+): Promise<boolean> {
+  const [record] = await transaction
+    .select({ id: sourceMessage.id })
+    .from(sourceMessage)
+    .where(
+      and(eq(sourceMessage.workspaceId, workspaceId), eq(sourceMessage.id, sourceMessageRecordId)),
+    )
+    .limit(1)
+    .for('share');
+
+  return Boolean(record);
 }
 
 async function persistAuditEvents(
@@ -126,7 +149,8 @@ export async function listWorkspaceCommitmentAuditEvents(
 export type CreateWorkspaceCommitmentResult =
   | { status: 'created'; commitment: Commitment }
   | { status: 'actor-not-member' }
-  | { status: 'owner-not-member' };
+  | { status: 'owner-not-member' }
+  | { status: 'source-message-not-found' };
 
 export async function createWorkspaceCommitment(
   workspaceId: string,
@@ -146,6 +170,14 @@ export async function createWorkspaceCommitment(
       return { status: 'owner-not-member' };
     }
 
+    if (
+      input.sourceMessageRecordId !== undefined &&
+      input.sourceMessageRecordId !== null &&
+      !(await hasWorkspaceSourceMessage(transaction, workspaceId, input.sourceMessageRecordId))
+    ) {
+      return { status: 'source-message-not-found' };
+    }
+
     const occurredAt = new Date();
     const [created] = await transaction
       .insert(commitment)
@@ -156,7 +188,7 @@ export async function createWorkspaceCommitment(
         commitmentText: input.commitmentText,
         normalizedAction: input.normalizedAction,
         ownerUserId: input.ownerUserId,
-        sourceMessageId: input.sourceMessageId,
+        sourceMessageRecordId: input.sourceMessageRecordId,
         counterpartyName: input.counterpartyName,
         counterpartyEmail: input.counterpartyEmail,
         dueAt: input.dueAt,
@@ -184,6 +216,8 @@ export type UpdateWorkspaceCommitmentResult =
   | { status: 'not-found' }
   | { status: 'actor-not-member' }
   | { status: 'owner-not-member' }
+  | { status: 'source-message-not-found' }
+  | { status: 'source-message-conflict' }
   | {
       status: 'transition-rejected';
       code: 'INVALID_TRANSITION' | 'COMPLETION_SIGNAL_REQUIRED';
@@ -217,6 +251,22 @@ export async function updateWorkspaceCommitment(
       (await hasWorkspaceMembership(transaction, workspaceId, input.ownerUserId)) !== 'member'
     ) {
       return { status: 'owner-not-member' };
+    }
+
+    if (
+      input.sourceMessageRecordId !== undefined &&
+      input.sourceMessageRecordId !== null &&
+      current.sourceMessageId !== null
+    ) {
+      return { status: 'source-message-conflict' };
+    }
+
+    if (
+      input.sourceMessageRecordId !== undefined &&
+      input.sourceMessageRecordId !== null &&
+      !(await hasWorkspaceSourceMessage(transaction, workspaceId, input.sourceMessageRecordId))
+    ) {
+      return { status: 'source-message-not-found' };
     }
 
     const { status: targetStatus, completionSignal, ...inputFields } = input;

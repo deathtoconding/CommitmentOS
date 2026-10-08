@@ -10,7 +10,7 @@ describe('createCommitmentSchema', () => {
       counterpartyEmail: '  CLIENT@EXAMPLE.COM ',
       dueAt,
       ownerUserId: null,
-      sourceMessageId: null,
+      sourceMessageRecordId: null,
       counterpartyName: null,
       dueTimezone: null,
       confidenceScore: null,
@@ -23,12 +23,30 @@ describe('createCommitmentSchema', () => {
       counterpartyEmail: 'client@example.com',
       dueAt: new Date(dueAt),
       ownerUserId: null,
-      sourceMessageId: null,
+      sourceMessageRecordId: null,
       counterpartyName: null,
       dueTimezone: null,
       confidenceScore: null,
       sourceExcerpt: null,
     });
+  });
+
+  it('accepts only a workspace-resolvable source record ID, never a client-supplied legacy reference', () => {
+    const sourceMessageRecordId = '00000000-0000-4000-8000-000000000001';
+    expect(
+      createCommitmentSchema.parse({
+        commitmentText: 'Send the revised proposal',
+        normalizedAction: 'Send revised proposal',
+        sourceMessageRecordId,
+      }).sourceMessageRecordId,
+    ).toBe(sourceMessageRecordId);
+    expect(
+      createCommitmentSchema.safeParse({
+        commitmentText: 'Send the revised proposal',
+        normalizedAction: 'Send revised proposal',
+        sourceMessageId: 'unscoped-provider-message-id',
+      }).success,
+    ).toBe(false);
   });
 
   it('rejects blank descriptions, invalid ranges, malformed dates, and server-owned fields', () => {

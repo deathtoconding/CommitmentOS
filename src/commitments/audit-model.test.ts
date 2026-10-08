@@ -14,6 +14,7 @@ function commitment(overrides: Partial<Commitment> = {}): Commitment {
     workspaceId: 'workspace-1',
     ownerUserId: null,
     sourceMessageId: null,
+    sourceMessageRecordId: null,
     commitmentText: 'Send the revised proposal',
     normalizedAction: 'Send revised proposal',
     counterpartyName: null,
@@ -75,6 +76,17 @@ describe('commitment audit event classification', () => {
     const serialized = JSON.stringify(createCommitmentAuditEvents(before, after));
     expect(serialized).not.toContain(after.commitmentText);
     expect(serialized).not.toContain(after.sourceExcerpt);
+  });
+
+  it('audits source-link changes by field name without exposing provider identifiers', () => {
+    const before = commitment();
+    const after = commitment({ sourceMessageRecordId: 'source-record-123' });
+
+    const events = createCommitmentAuditEvents(before, after);
+    expect(events).toEqual([
+      { eventType: 'EDITED', details: { changedFields: ['sourceMessageRecordId'] } },
+    ]);
+    expect(JSON.stringify(events)).not.toContain('source-record-123');
   });
 
   it('records reassignment and deadline changes with their old and new values', () => {

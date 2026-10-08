@@ -4,7 +4,7 @@ import { COMMITMENT_STATUSES } from './model';
 const commitmentTextSchema = z.string().trim().min(1).max(5_000);
 const normalizedActionSchema = z.string().trim().min(1).max(5_000);
 const nullableOwnerUserIdSchema = z.string().trim().min(1).max(255).nullable().optional();
-const nullableSourceMessageIdSchema = z.string().trim().min(1).max(2_048).nullable().optional();
+const nullableSourceMessageRecordIdSchema = z.string().uuid().nullable().optional();
 const nullableCounterpartyNameSchema = z.string().trim().min(1).max(255).nullable().optional();
 const nullableCounterpartyEmailSchema = z
   .string()
@@ -27,7 +27,7 @@ const nullableCompletionEvidenceSchema = z.string().max(10_000).nullable().optio
 
 const commitmentDetails = {
   ownerUserId: nullableOwnerUserIdSchema,
-  sourceMessageId: nullableSourceMessageIdSchema,
+  sourceMessageRecordId: nullableSourceMessageRecordIdSchema,
   counterpartyName: nullableCounterpartyNameSchema,
   counterpartyEmail: nullableCounterpartyEmailSchema,
   dueAt: nullableDueAtSchema,

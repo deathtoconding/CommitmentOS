@@ -7,7 +7,7 @@ COM-108 establishes persistence and the domain shape. COM-109 implements the dom
 - Every commitment has a required `workspace_id` foreign key to `commitmentos.workspace`; deleting a workspace cascades its commitments.
 - `owner_user_id` is nullable because responsibility may be unknown. When present it references an existing user; deleting that user clears the assignment rather than deleting the commitment.
 - `created_by` is required and references the user who created the record. User deletion is restricted while they are the recorded creator so attribution is not silently lost.
-- `source_message_id` is nullable and opaque in this increment because the source-message model is not yet present. It is indexed together with `workspace_id`; a future source-message model can define that relation.
+- The legacy `source_message_id` remains nullable and unchanged for historical opaque references. COM-116 backfills one metadata-only source record per distinct `(workspace_id, source_message_id)` and adds a composite foreign key, without inferring provider, account, message, or event-time facts. New associations use the workspace-scoped `source_message_record_id`; both paths are enforced within the same workspace. See [source-message identity and retention](source-messages.md).
 
 ## Unknown and extracted information
 

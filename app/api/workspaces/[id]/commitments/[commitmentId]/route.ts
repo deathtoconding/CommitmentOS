@@ -73,6 +73,9 @@ export async function PATCH(
     if (result.status === 'transition-rejected') {
       return workspaceResponse({ error: result.code }, 409);
     }
+    if (result.status === 'source-message-conflict') {
+      return workspaceResponse({ error: 'SOURCE_MESSAGE_CONFLICT' }, 409);
+    }
     return notFoundResponse();
   } catch {
     return internalErrorResponse();

@@ -89,5 +89,8 @@ jobs:
       - name: Authentication, workspace, and commitment integration tests
         run: npm run test:integration
 
+      - name: PostgreSQL source-message integration tests
+        run: npm run test:source-messages-integration
+
       - name: PostgreSQL and Redis/BullMQ job integration tests
         run: npm run test:jobs-integration
