@@ -1,28 +1,9 @@
-import { headers } from 'next/headers';
-import { redirect } from 'next/navigation';
-import { LogoutButton } from '@/auth/components/logout-button';
-import { getAuthenticatedSession } from '@/auth/session';
+import { AppSectionPage, type AppSearchParams } from '@/app-shell/section-page';
 
-export default async function AppHomePage() {
-  const currentSession = await getAuthenticatedSession(await headers());
-  if (!currentSession) {
-    redirect('/login');
-  }
+type AppHomePageProps = {
+  searchParams: Promise<AppSearchParams>;
+};
 
-  return (
-    <main className="page-shell">
-      <section aria-labelledby="app-title" className="foundation-card app-card">
-        <div className="brand-mark" aria-hidden="true">
-          C
-        </div>
-        <p className="eyebrow">Your account</p>
-        <h1 id="app-title">You’re signed in.</h1>
-        <p className="intro">
-          Welcome, {currentSession.user.name}. The workspace experience comes next.
-        </p>
-        <p className="account-email">{currentSession.user.email}</p>
-        <LogoutButton />
-      </section>
-    </main>
-  );
+export default function AppHomePage({ searchParams }: AppHomePageProps) {
+  return <AppSectionPage section="dashboard" searchParams={searchParams} />;
 }

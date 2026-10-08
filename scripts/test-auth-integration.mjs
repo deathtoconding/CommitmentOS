@@ -97,6 +97,13 @@ function workspaceRequest(path, { method = 'GET', cookie, body } = {}) {
   });
 }
 
+function appPageRequest(path, cookie) {
+  return fetch(`${baseURL}${path}`, {
+    headers: cookie ? { cookie } : {},
+    redirect: 'manual',
+  });
+}
+
 function readCookieHeader(response) {
   const cookies = response.headers.getSetCookie();
   return cookies
@@ -309,6 +316,9 @@ try {
     'Unauthenticated users must be redirected away from /app.',
   );
   assert.match(anonymousPage.headers.get('location') ?? '', /\/login$/);
+  const anonymousNestedPage = await appPageRequest('/app/inbox');
+  assert.equal(anonymousNestedPage.status, 307);
+  assert.match(anonymousNestedPage.headers.get('location') ?? '', /\/login$/);
 
   const invalidRegistration = await authRequest('sign-up/email', {
     name: 'Test User',
@@ -387,10 +397,15 @@ try {
     200,
     'An authenticated user should be able to access /app.',
   );
-  assert.match(
-    await authenticatedPage.text(),
-    new RegExp(email.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
-  );
+  const initialAppBody = await authenticatedPage.text();
+  assert.match(initialAppBody, new RegExp(email.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.match(initialAppBody, /No workspace available/);
+  assert.match(initialAppBody, /Sign out/);
+  for (const sectionName of ['Inbox', 'Commitments', 'Dashboard', 'Integrations', 'Settings']) {
+    assert.match(initialAppBody, new RegExp(sectionName));
+  }
+  assert.match(authenticatedPage.headers.get('cache-control') ?? '', /private/i);
+  assert.match(authenticatedPage.headers.get('cache-control') ?? '', /no-store/i);
 
   const anonymousWorkspaceList = await workspaceRequest('/api/workspaces');
   assert.equal(anonymousWorkspaceList.status, 401, 'Workspace APIs must require authentication.');
@@ -425,6 +440,18 @@ try {
   workspaceIds.push(firstWorkspace.id);
   assert.equal(firstWorkspace.name, 'Product Team', 'Workspace names should be trimmed.');
   assert.equal(firstWorkspace.role, 'OWNER', 'Workspace creators must become owners.');
+
+  const authenticatedWorkspacePage = await appPageRequest(
+    `/app?workspaceId=${firstWorkspace.id}`,
+    cookie,
+  );
+  assert.equal(authenticatedWorkspacePage.status, 200);
+  const authenticatedWorkspaceBody = await authenticatedWorkspacePage.text();
+  assert.match(authenticatedWorkspaceBody, /Product Team/);
+  assert.match(authenticatedWorkspaceBody, /Active workspace/);
+  assert.match(authenticatedWorkspaceBody, /Workspace owner/);
+  assert.match(authenticatedWorkspaceBody, /Your overview is ready/);
+  assert.match(authenticatedWorkspacePage.headers.get('cache-control') ?? '', /no-store/i);
 
   const ownerMembership = await pool.query(
     `SELECT role
@@ -507,6 +534,27 @@ try {
   workspaceIds.push(secondWorkspace.id);
   assert.equal(secondWorkspace.role, 'OWNER');
 
+  const appSectionCases = [
+    ['/app', 'Your overview is ready'],
+    ['/app/inbox', 'Your inbox is ready'],
+    ['/app/commitments', 'No commitments to show yet'],
+    ['/app/integrations', 'No integrations are configured here'],
+    ['/app/settings', 'Your signed-in profile'],
+  ];
+  for (const [path, expectedContent] of appSectionCases) {
+    const response = await appPageRequest(`${path}?workspaceId=${secondWorkspace.id}`, cookie);
+    assert.equal(response.status, 200, `${path} should render for a workspace member.`);
+    const body = await response.text();
+    assert.match(body, /Operations/);
+    assert.ok(body.includes(expectedContent), `${path} should render its designed empty state.`);
+    assert.match(response.headers.get('cache-control') ?? '', /no-store/i);
+  }
+  const workspaceSwitchNotice = await appPageRequest(
+    `/app?workspaceId=${secondWorkspace.id}&notice=workspace-switched`,
+    cookie,
+  );
+  assert.match(await workspaceSwitchNotice.text(), /Switched to Operations/);
+
   const secondRegistration = await authRequest('sign-up/email', {
     name: 'Second Integration User',
     email: secondEmail,
@@ -518,6 +566,23 @@ try {
   const secondLogin = await authRequest('sign-in/email', { email: secondEmail, password });
   assert.ok(secondLogin.ok, 'The second user should be able to sign in.');
   const secondCookie = readCookieHeader(secondLogin);
+
+  const secondUserCannotSelectFirstWorkspace = await appPageRequest(
+    `/app?workspaceId=${firstWorkspace.id}`,
+    secondCookie,
+  );
+  assert.equal(secondUserCannotSelectFirstWorkspace.status, 404);
+  assert.doesNotMatch(await secondUserCannotSelectFirstWorkspace.text(), /Product Team/);
+  const unknownWorkspaceSelection = await appPageRequest(
+    `/app?workspaceId=${randomUUID()}`,
+    cookie,
+  );
+  assert.equal(unknownWorkspaceSelection.status, 404);
+  const ambiguousWorkspaceSelection = await appPageRequest(
+    `/app?workspaceId=${firstWorkspace.id}&workspaceId=${secondWorkspace.id}`,
+    cookie,
+  );
+  assert.equal(ambiguousWorkspaceSelection.status, 404);
 
   const persistenceCommitments = await testCommitmentPersistence({
     workspaceId: firstWorkspace.id,
@@ -696,6 +761,13 @@ try {
   const addedMember = (await addMemberResponse.json()).member;
   assert.equal(addedMember.userId, secondRegistrationResult.user.id);
   assert.equal(addedMember.role, 'MEMBER');
+
+  const newlyAddedMemberWorkspacePage = await appPageRequest(
+    `/app/settings?workspaceId=${firstWorkspace.id}`,
+    secondCookie,
+  );
+  assert.equal(newlyAddedMemberWorkspacePage.status, 200);
+  assert.match(await newlyAddedMemberWorkspacePage.text(), /Product Team/);
 
   const memberCommitmentList = await workspaceRequest(firstCommitmentsPath, {
     cookie: secondCookie,
@@ -1100,6 +1172,11 @@ try {
   );
   assert.equal(ownerRemoveMemberResponse.status, 200, 'Owners should be able to remove members.');
   assert.equal((await ownerRemoveMemberResponse.json()).removed, true);
+  const removedMemberCannotSelectWorkspace = await appPageRequest(
+    `/app?workspaceId=${firstWorkspace.id}`,
+    secondCookie,
+  );
+  assert.equal(removedMemberCannotSelectWorkspace.status, 404);
 
   const readdedMemberResponse = await workspaceRequest(
     `/api/workspaces/${firstWorkspace.id}/members`,
@@ -1230,6 +1307,12 @@ try {
     { cookie },
   );
   assert.equal(firstUserCannotReadThirdWorkspace.status, 404);
+  const firstUserCannotSelectThirdWorkspace = await appPageRequest(
+    `/app/settings?workspaceId=${thirdWorkspace.id}`,
+    cookie,
+  );
+  assert.equal(firstUserCannotSelectThirdWorkspace.status, 404);
+  assert.doesNotMatch(await firstUserCannotSelectThirdWorkspace.text(), /Customer Success/);
 
   const logout = await authRequest('sign-out', {}, cookie);
   assert.ok(logout.ok, 'Logout should complete successfully.');
@@ -1239,6 +1322,7 @@ try {
     redirect: 'manual',
   });
   assert.equal(invalidatedPage.status, 307, 'A logged-out session must no longer access /app.');
+  assert.match(invalidatedPage.headers.get('cache-control') ?? '', /no-store/i);
   const invalidatedWorkspaceList = await workspaceRequest('/api/workspaces', { cookie });
   assert.equal(
     invalidatedWorkspaceList.status,

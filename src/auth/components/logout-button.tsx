@@ -1,11 +1,9 @@
 'use client';
 
-import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { authClient } from '@/auth/client';
 
 export function LogoutButton() {
-  const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -20,8 +18,7 @@ export function LogoutButton() {
         return;
       }
 
-      router.replace('/login');
-      router.refresh();
+      window.location.replace('/login');
     } catch {
       setError('Could not sign out. Please try again.');
     } finally {
@@ -30,7 +27,7 @@ export function LogoutButton() {
   }
 
   return (
-    <div className="logout-actions">
+    <div aria-busy={isSubmitting} className="logout-actions">
       <button className="secondary-button" disabled={isSubmitting} onClick={signOut} type="button">
         {isSubmitting ? 'Signing out…' : 'Sign out'}
       </button>

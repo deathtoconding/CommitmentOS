@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import { asc, desc, eq } from 'drizzle-orm';
 import { database } from '@/db/client';
 import { workspace, workspaceMember } from '@/db/schema';
+import { listUserWorkspaces } from '@/workspaces/queries';
 import { requireSession } from '@/workspaces/authorization';
 import { createWorkspaceSchema } from '@/workspaces/schemas';
 import {
@@ -17,18 +17,7 @@ export async function GET(request: Request): Promise<Response> {
   }
 
   try {
-    const workspaces = await database
-      .select({
-        id: workspace.id,
-        name: workspace.name,
-        createdAt: workspace.createdAt,
-        role: workspaceMember.role,
-      })
-      .from(workspaceMember)
-      .innerJoin(workspace, eq(workspaceMember.workspaceId, workspace.id))
-      .where(eq(workspaceMember.userId, sessionResult.value.user.id))
-      .orderBy(desc(workspace.createdAt), asc(workspace.id));
-
+    const workspaces = await listUserWorkspaces(sessionResult.value.user.id);
     return workspaceResponse({ workspaces });
   } catch {
     return internalErrorResponse();

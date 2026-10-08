@@ -1,7 +1,6 @@
 'use client';
 
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { useState, type FormEvent } from 'react';
 import { authClient } from '@/auth/client';
 import { loginSchema, registrationSchema } from '@/auth/schemas';
@@ -11,7 +10,6 @@ type AuthFormProps = {
 };
 
 export function AuthForm({ mode }: AuthFormProps) {
-  const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -70,8 +68,7 @@ export function AuthForm({ mode }: AuthFormProps) {
         return;
       }
 
-      router.replace('/app');
-      router.refresh();
+      window.location.replace('/app');
     } catch {
       setError('Authentication is temporarily unavailable. Please try again.');
     } finally {

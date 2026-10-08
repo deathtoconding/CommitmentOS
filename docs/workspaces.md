@@ -31,7 +31,9 @@ All endpoints require an authenticated Better Auth session and return `401 UNAUT
 
 A member who attempts administration receives `403 FORBIDDEN`; unknown workspaces and target memberships return `404 NOT_FOUND`. The final `OWNER` cannot be demoted or removed (`409 FINAL_OWNER_REQUIRED`). Every owner-only mutation rechecks authorization inside a database transaction and locks the workspace row. Demotions and removals count owners before applying the change, serializing concurrent membership mutations so they cannot remove or demote the final owner.
 
-There is no stored “current workspace” selection; clients retrieve a workspace by ID, and membership is checked on every request. COM-107 implements existing-account membership management, but not invitation email, pending invitations, or broader RBAC policy.
+There is no server-trusted “current workspace” value. The COM-112 shell may carry the selected `workspaceId` in the page URL as a UI selector only; each `/app` server page resolves it against memberships queried for the authenticated session user. Unknown and non-member selections render the same not-found state, and changing the URL alone never grants access. App pages are dynamically rendered with `private, no-store` response headers; section navigation uses full document requests, and pages restored from the browser back-forward cache are reloaded, so a previous workspace's client data is not reused after switching. Workspace APIs continue to run their own membership guard on every request.
+
+COM-112 adds an authenticated `/app` shell with Inbox, Commitments, Dashboard, Integrations, and Settings navigation, a server-populated active-workspace selector, account menu, responsive navigation, and loading/empty/error/success states. The shell does not implement provider behavior, commitment inbox workflows, or dashboard data. Logout uses Better Auth to invalidate the session and then performs a full navigation to the public sign-in page. COM-107 implements existing-account membership management, but not invitation email, pending invitations, or broader RBAC policy.
 
 ## Tenant-isolation invariant
 
