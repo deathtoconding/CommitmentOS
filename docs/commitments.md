@@ -1,6 +1,6 @@
 # Commitment aggregate (COM-108)
 
-COM-108 establishes persistence and the domain shape. COM-109 implements the domain transition service and lifecycle rules; the commitment API belongs to COM-110.
+COM-108 establishes persistence and the domain shape. COM-109 implements the domain transition service and lifecycle rules. COM-110 exposes the commitment aggregate through a workspace-scoped HTTP API.
 
 ## Workspace and user references
 
@@ -31,6 +31,21 @@ The PostgreSQL enum contains `DETECTED`, `OPEN`, `DUE_SOON`, `WAITING`, `BLOCKED
 | `DISMISSED`    | None (terminal)                                                       |
 
 Same-state changes and every other unspecified transition are rejected. Moving to `COMPLETED` requires a caller-provided explicit completion signal or existing nonblank completion evidence; the service sets `completed_at` but does not create evidence or define its source. `DUE_SOON` and `OVERDUE` are explicit valid targets only; the lifecycle service does not inspect the clock or evaluate deadlines. Scheduling and automatic deadline evaluation belong to COM-135.
+
+## Workspace-scoped API (COM-110)
+
+All commitment API routes require an authenticated workspace member. Collection and item lookups are scoped by the workspace resolved through membership authorization; item lookups include both the authorized workspace ID and commitment ID, returning the same not-found response for missing and cross-workspace records. Workspace members may list, create, read, and update commitments.
+
+| Method  | Route                                           | Behavior                                                                                                        |
+| ------- | ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `GET`   | `/api/workspaces/:id/commitments`               | List commitments for the authorized workspace, newest first.                                                    |
+| `POST`  | `/api/workspaces/:id/commitments`               | Create in the authorized workspace; the server sets the creator and the database defaults status to `DETECTED`. |
+| `GET`   | `/api/workspaces/:id/commitments/:commitmentId` | Read one commitment scoped to the authorized workspace.                                                         |
+| `PATCH` | `/api/workspaces/:id/commitments/:commitmentId` | Update editable fields and optionally request a lifecycle transition.                                           |
+
+Request objects are strict: workspace, creator, timestamps, and status on creation are server-owned. Nullable owner, source, counterparty, deadline, confidence, and excerpt fields remain nullable; an assigned owner must be a member of that workspace. On update, callers cannot write lifecycle timestamps. Status changes are serialized against the stored row and must pass through `transitionCommitment`; invalid or same-state transitions return `409 INVALID_TRANSITION`. Completion requires `completionSignal: true` or completion evidence already stored before the transition request. Completion evidence submitted in the same request is not treated as pre-existing evidence. The service sets `completedAt`; it does not manufacture evidence. `DISMISSED` is the lifecycle alternative to deleting a record; there is no physical-delete endpoint.
+
+The API does not add audit persistence, scheduling, deadline evaluation, AI extraction, or notifications.
 
 ## Indexes
 

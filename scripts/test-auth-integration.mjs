@@ -274,6 +274,8 @@ async function testCommitmentPersistence({ workspaceId, otherWorkspaceId, userId
     (error) => error.code === '23503',
     'The creator must reference an existing user.',
   );
+
+  return { populatedId, sparseId };
 }
 
 async function cleanupServer() {
@@ -506,11 +508,132 @@ try {
   assert.ok(secondLogin.ok, 'The second user should be able to sign in.');
   const secondCookie = readCookieHeader(secondLogin);
 
-  await testCommitmentPersistence({
+  const persistenceCommitments = await testCommitmentPersistence({
     workspaceId: firstWorkspace.id,
     otherWorkspaceId: secondWorkspace.id,
     userId: registrationResult.user.id,
   });
+
+  const firstCommitmentsPath = `/api/workspaces/${firstWorkspace.id}/commitments`;
+  const apiCommitmentCollectionAnonymous = await workspaceRequest(firstCommitmentsPath);
+  assert.equal(apiCommitmentCollectionAnonymous.status, 401);
+  const apiCommitmentItemAnonymous = await workspaceRequest(
+    `${firstCommitmentsPath}/${persistenceCommitments.populatedId}`,
+  );
+  assert.equal(apiCommitmentItemAnonymous.status, 401);
+
+  const secondUserCannotListCommitmentsBeforeMembership = await workspaceRequest(
+    firstCommitmentsPath,
+    { cookie: secondCookie },
+  );
+  assert.equal(secondUserCannotListCommitmentsBeforeMembership.status, 404);
+  const secondUserCannotCreateCommitmentBeforeMembership = await workspaceRequest(
+    firstCommitmentsPath,
+    {
+      method: 'POST',
+      cookie: secondCookie,
+      body: { commitmentText: 'Unauthorized', normalizedAction: 'Create unauthorized item' },
+    },
+  );
+  assert.equal(secondUserCannotCreateCommitmentBeforeMembership.status, 404);
+
+  const overpostedCommitment = await workspaceRequest(firstCommitmentsPath, {
+    method: 'POST',
+    cookie,
+    body: {
+      commitmentText: 'Must not be created',
+      normalizedAction: 'Attempt client-owned fields',
+      workspaceId: secondWorkspace.id,
+      createdBy: secondRegistrationResult.user.id,
+      status: 'OPEN',
+    },
+  });
+  assert.equal(overpostedCommitment.status, 400, 'Creation must reject server-owned fields.');
+
+  const apiCommitmentCreate = await workspaceRequest(firstCommitmentsPath, {
+    method: 'POST',
+    cookie,
+    body: {
+      commitmentText: 'Send the API integration report.',
+      normalizedAction: 'Send integration report',
+      ownerUserId: null,
+      dueAt: null,
+      completionEvidence: 'Must not be accepted at creation.',
+    },
+  });
+  assert.equal(apiCommitmentCreate.status, 400, 'Creation must reject lifecycle-only fields.');
+  const validApiCommitmentCreate = await workspaceRequest(firstCommitmentsPath, {
+    method: 'POST',
+    cookie,
+    body: {
+      commitmentText: 'Send the API integration report.',
+      normalizedAction: 'Send integration report',
+      ownerUserId: null,
+      dueAt: null,
+    },
+  });
+  assert.equal(validApiCommitmentCreate.status, 201);
+  const apiCommitment = (await validApiCommitmentCreate.json()).commitment;
+  assert.equal(apiCommitment.workspaceId, firstWorkspace.id);
+  assert.equal(apiCommitment.createdBy, registrationResult.user.id);
+  assert.equal(apiCommitment.status, 'DETECTED', 'API-created commitments start in DETECTED.');
+  assert.equal(apiCommitment.completionEvidence, null);
+  assert.equal(apiCommitment.completedAt, null);
+
+  const firstWorkspaceCommitmentListResponse = await workspaceRequest(firstCommitmentsPath, {
+    cookie,
+  });
+  assert.equal(firstWorkspaceCommitmentListResponse.status, 200);
+  const firstWorkspaceCommitments = (await firstWorkspaceCommitmentListResponse.json()).commitments;
+  assert.deepEqual(
+    new Set(firstWorkspaceCommitments.map((item) => item.id)),
+    new Set([persistenceCommitments.populatedId, apiCommitment.id]),
+    'A collection response must include only commitments in the authorized workspace.',
+  );
+  const secondWorkspaceCommitmentListResponse = await workspaceRequest(
+    `/api/workspaces/${secondWorkspace.id}/commitments`,
+    { cookie },
+  );
+  assert.equal(secondWorkspaceCommitmentListResponse.status, 200);
+  assert.deepEqual(
+    (await secondWorkspaceCommitmentListResponse.json()).commitments.map((item) => item.id),
+    [persistenceCommitments.sparseId],
+    'A second workspace list must not include the first workspace commitments.',
+  );
+
+  const apiCommitmentItemResponse = await workspaceRequest(
+    `${firstCommitmentsPath}/${apiCommitment.id}`,
+    { cookie },
+  );
+  assert.equal(apiCommitmentItemResponse.status, 200);
+  assert.equal((await apiCommitmentItemResponse.json()).commitment.id, apiCommitment.id);
+
+  const crossWorkspaceCommitmentRead = await workspaceRequest(
+    `/api/workspaces/${secondWorkspace.id}/commitments/${apiCommitment.id}`,
+    { cookie },
+  );
+  assert.equal(crossWorkspaceCommitmentRead.status, 404);
+  const crossWorkspaceCommitmentUpdate = await workspaceRequest(
+    `/api/workspaces/${secondWorkspace.id}/commitments/${apiCommitment.id}`,
+    { method: 'PATCH', cookie, body: { commitmentText: 'Cross-workspace update' } },
+  );
+  assert.equal(crossWorkspaceCommitmentUpdate.status, 404);
+
+  const secondUserCannotReadCommitmentBeforeMembership = await workspaceRequest(
+    `${firstCommitmentsPath}/${apiCommitment.id}`,
+    { cookie: secondCookie },
+  );
+  assert.equal(secondUserCannotReadCommitmentBeforeMembership.status, 404);
+
+  const nonMemberOwnerAssignment = await workspaceRequest(
+    `${firstCommitmentsPath}/${apiCommitment.id}`,
+    { method: 'PATCH', cookie, body: { ownerUserId: secondRegistrationResult.user.id } },
+  );
+  assert.equal(
+    nonMemberOwnerAssignment.status,
+    400,
+    'Commitment owners must be workspace members.',
+  );
 
   const emptySecondUserList = await workspaceRequest('/api/workspaces', { cookie: secondCookie });
   assert.equal(emptySecondUserList.status, 200);
@@ -525,6 +648,122 @@ try {
   const addedMember = (await addMemberResponse.json()).member;
   assert.equal(addedMember.userId, secondRegistrationResult.user.id);
   assert.equal(addedMember.role, 'MEMBER');
+
+  const memberCommitmentList = await workspaceRequest(firstCommitmentsPath, {
+    cookie: secondCookie,
+  });
+  assert.equal(memberCommitmentList.status, 200, 'Workspace members may list commitments.');
+  assert.ok(
+    (await memberCommitmentList.json()).commitments.some((item) => item.id === apiCommitment.id),
+  );
+
+  const assignCommitmentOwner = await workspaceRequest(
+    `${firstCommitmentsPath}/${apiCommitment.id}`,
+    {
+      method: 'PATCH',
+      cookie: secondCookie,
+      body: { ownerUserId: secondRegistrationResult.user.id },
+    },
+  );
+  assert.equal(assignCommitmentOwner.status, 200);
+  assert.equal(
+    (await assignCommitmentOwner.json()).commitment.ownerUserId,
+    secondRegistrationResult.user.id,
+  );
+
+  const invalidCommitmentOwner = await workspaceRequest(
+    `${firstCommitmentsPath}/${apiCommitment.id}`,
+    { method: 'PATCH', cookie, body: { ownerUserId: randomUUID() } },
+  );
+  assert.equal(invalidCommitmentOwner.status, 400);
+
+  const openCommitment = await workspaceRequest(`${firstCommitmentsPath}/${apiCommitment.id}`, {
+    method: 'PATCH',
+    cookie: secondCookie,
+    body: { status: 'OPEN' },
+  });
+  assert.equal(openCommitment.status, 200);
+  assert.equal((await openCommitment.json()).commitment.status, 'OPEN');
+
+  const repeatedCommitmentStatus = await workspaceRequest(
+    `${firstCommitmentsPath}/${apiCommitment.id}`,
+    { method: 'PATCH', cookie, body: { status: 'OPEN' } },
+  );
+  assert.equal(repeatedCommitmentStatus.status, 409);
+  assert.equal((await repeatedCommitmentStatus.json()).error, 'INVALID_TRANSITION');
+
+  const newEvidenceCannotReplaceAnExplicitSignal = await workspaceRequest(
+    `${firstCommitmentsPath}/${apiCommitment.id}`,
+    {
+      method: 'PATCH',
+      cookie,
+      body: { status: 'COMPLETED', completionEvidence: 'Evidence added in this same request.' },
+    },
+  );
+  assert.equal(newEvidenceCannotReplaceAnExplicitSignal.status, 409);
+  assert.equal(
+    (await newEvidenceCannotReplaceAnExplicitSignal.json()).error,
+    'COMPLETION_SIGNAL_REQUIRED',
+  );
+
+  const missingCompletionSignal = await workspaceRequest(
+    `${firstCommitmentsPath}/${apiCommitment.id}`,
+    { method: 'PATCH', cookie, body: { status: 'COMPLETED' } },
+  );
+  assert.equal(missingCompletionSignal.status, 409);
+  assert.equal((await missingCompletionSignal.json()).error, 'COMPLETION_SIGNAL_REQUIRED');
+
+  const completedCommitmentResponse = await workspaceRequest(
+    `${firstCommitmentsPath}/${apiCommitment.id}`,
+    {
+      method: 'PATCH',
+      cookie: secondCookie,
+      body: { status: 'COMPLETED', completionSignal: true },
+    },
+  );
+  assert.equal(completedCommitmentResponse.status, 200);
+  const completedCommitment = (await completedCommitmentResponse.json()).commitment;
+  assert.equal(completedCommitment.status, 'COMPLETED');
+  assert.ok(completedCommitment.completedAt, 'The lifecycle service should timestamp completion.');
+  assert.equal(completedCommitment.completionEvidence, null, 'The API must not invent evidence.');
+
+  const terminalCommitmentReopen = await workspaceRequest(
+    `${firstCommitmentsPath}/${apiCommitment.id}`,
+    { method: 'PATCH', cookie, body: { status: 'OPEN' } },
+  );
+  assert.equal(terminalCommitmentReopen.status, 409);
+  assert.equal((await terminalCommitmentReopen.json()).error, 'INVALID_TRANSITION');
+
+  const raceCreateResponse = await workspaceRequest(firstCommitmentsPath, {
+    method: 'POST',
+    cookie,
+    body: { commitmentText: 'Resolve concurrent transitions.', normalizedAction: 'Resolve race' },
+  });
+  assert.equal(raceCreateResponse.status, 201);
+  const raceCommitmentId = (await raceCreateResponse.json()).commitment.id;
+  const raceOpenResponse = await workspaceRequest(`${firstCommitmentsPath}/${raceCommitmentId}`, {
+    method: 'PATCH',
+    cookie,
+    body: { status: 'OPEN' },
+  });
+  assert.equal(raceOpenResponse.status, 200);
+  const concurrentTransitions = await Promise.all([
+    workspaceRequest(`${firstCommitmentsPath}/${raceCommitmentId}`, {
+      method: 'PATCH',
+      cookie,
+      body: { status: 'COMPLETED', completionSignal: true },
+    }),
+    workspaceRequest(`${firstCommitmentsPath}/${raceCommitmentId}`, {
+      method: 'PATCH',
+      cookie: secondCookie,
+      body: { status: 'DISMISSED' },
+    }),
+  ]);
+  assert.deepEqual(
+    concurrentTransitions.map((response) => response.status).sort(),
+    [200, 409],
+    'Concurrent terminal transitions must serialize against the current database status.',
+  );
 
   const duplicateMemberResponse = await workspaceRequest(
     `/api/workspaces/${firstWorkspace.id}/members`,
