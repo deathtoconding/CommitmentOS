@@ -145,7 +145,7 @@ export function PasswordRecoveryForm(props: PasswordRecoveryFormProps) {
       <p className="auth-intro">
         {isReset
           ? 'Choose a new password for your account. The reset link can only be used once.'
-          : 'Enter the email address associated with your account. We will send a reset link if an account matches.'}
+          : 'Enter the email address associated with your account. We will send a reset link if an account matches. This page does not confirm whether an account is registered.'}
       </p>
 
       <form className="auth-form" onSubmit={handleSubmit} noValidate>

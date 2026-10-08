@@ -125,11 +125,15 @@ function storedVerificationIdentifier(identifier) {
   return createHash('sha256').update(identifier).digest('base64url');
 }
 
-async function emailLinkFor(recipient, pathFragment) {
+async function emailLinkFor(recipient, pathFragment, minimumDeliveryCount = 1) {
   for (let attempt = 0; attempt < 40; attempt += 1) {
-    const message = [...emailMessages]
-      .reverse()
-      .find((delivery) => delivery.recipient === recipient.toLowerCase());
+    const matchingMessages = emailMessages.filter(
+      (delivery) =>
+        delivery.recipient === recipient.toLowerCase() &&
+        decodeQuotedPrintable(delivery.raw).includes(pathFragment),
+    );
+    const message =
+      matchingMessages.length >= minimumDeliveryCount ? matchingMessages.at(-1) : null;
     const decodedMessage = message ? decodeQuotedPrintable(message.raw) : '';
     const links = decodedMessage.match(/https?:\/\/[^\s<>"']+/g) ?? [];
     const link = links
@@ -142,16 +146,19 @@ async function emailLinkFor(recipient, pathFragment) {
   throw new Error(`No matching authentication link was delivered to ${recipient}.`);
 }
 
-async function verificationLinkFor(recipient) {
-  return emailLinkFor(recipient, '/verify-email?');
+async function verificationLinkFor(recipient, minimumDeliveryCount = 1) {
+  return emailLinkFor(recipient, '/verify-email?', minimumDeliveryCount);
 }
 
 async function passwordResetLinkFor(recipient) {
   return emailLinkFor(recipient, '/reset-password/');
 }
 
-async function followVerificationLink(recipient, { concurrent = false } = {}) {
-  const verificationLink = await verificationLinkFor(recipient);
+async function followVerificationLink(
+  recipient,
+  { concurrent = false, afterDeliveryCount = 0 } = {},
+) {
+  const verificationLink = await verificationLinkFor(recipient, afterDeliveryCount + 1);
   const verificationUrl = new URL(verificationLink);
   const token = verificationUrl.searchParams.get('token');
   assert.ok(token);
@@ -897,6 +904,10 @@ try {
   });
   assert.equal(invalidLogin.ok, false, 'Invalid credentials must be rejected.');
 
+  const verificationEmailCountBeforeSignIn = emailMessages.filter(
+    (message) =>
+      message.recipient === email && decodeQuotedPrintable(message.raw).includes('/verify-email?'),
+  ).length;
   const unverifiedLogin = await authRequest('sign-in/email', {
     email,
     password,
@@ -914,21 +925,25 @@ try {
     [registrationResult.user.id],
   );
   assert.equal(unverifiedAccountBeforeVerification.rows[0]?.email_verified, false);
-  const successfulVerification = await followVerificationLink(email);
+  const successfulVerification = await followVerificationLink(email, {
+    afterDeliveryCount: verificationEmailCountBeforeSignIn,
+  });
   const initialVerificationToken = new URL(initialVerificationLink).searchParams.get('token');
   assert.ok(initialVerificationToken);
-  assert.notEqual(
-    successfulVerification.token,
-    initialVerificationToken,
-    'The sign-in resend should issue a distinct verification token.',
-  );
   await assertVerificationReplayRejected(successfulVerification.link);
 
-  // A different still-valid token must also become single-use after the account is verified.
-  const previouslyIssuedLinkResponse = await fetch(initialVerificationLink, { redirect: 'manual' });
-  assert.equal(previouslyIssuedLinkResponse.status, 302);
-  verificationTokenHashes.push(createHash('sha256').update(initialVerificationToken).digest('hex'));
-  await assertVerificationReplayRejected(initialVerificationLink);
+  // If two tokens were issued in the same second, Better Auth can sign identical JWTs.
+  // Otherwise, prove that the earlier still-valid token can only be redeemed once.
+  if (successfulVerification.token !== initialVerificationToken) {
+    const previouslyIssuedLinkResponse = await fetch(initialVerificationLink, {
+      redirect: 'manual',
+    });
+    assert.equal(previouslyIssuedLinkResponse.status, 302);
+    verificationTokenHashes.push(
+      createHash('sha256').update(initialVerificationToken).digest('hex'),
+    );
+    await assertVerificationReplayRejected(initialVerificationLink);
+  }
 
   const verifiedAccount = await pool.query(
     'SELECT email_verified FROM commitmentos."user" WHERE id = $1',
