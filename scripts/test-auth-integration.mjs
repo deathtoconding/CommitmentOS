@@ -104,6 +104,22 @@ function appPageRequest(path, cookie) {
   });
 }
 
+async function assertAppPageUnavailable(response, hiddenWorkspaceNames = []) {
+  const body = await response.text();
+  // A streamed not-found page can carry HTTP 200 after Next has flushed the loading shell.
+  assert.ok(
+    response.status === 404 || response.status === 200,
+    `An inaccessible app page should return 404 or a streamed not-found response, got ${response.status}.`,
+  );
+  assert.match(body, /Workspace unavailable/);
+  for (const workspaceName of hiddenWorkspaceNames) {
+    assert.ok(
+      !body.includes(workspaceName),
+      `The inaccessible workspace ${workspaceName} must stay hidden.`,
+    );
+  }
+}
+
 function readCookieHeader(response) {
   const cookies = response.headers.getSetCookie();
   return cookies
@@ -572,18 +588,17 @@ try {
     `/app?workspaceId=${firstWorkspace.id}`,
     secondCookie,
   );
-  assert.equal(secondUserCannotSelectFirstWorkspace.status, 404);
-  assert.doesNotMatch(await secondUserCannotSelectFirstWorkspace.text(), /Product Team/);
+  await assertAppPageUnavailable(secondUserCannotSelectFirstWorkspace, ['Product Team']);
   const unknownWorkspaceSelection = await appPageRequest(
     `/app?workspaceId=${randomUUID()}`,
     cookie,
   );
-  assert.equal(unknownWorkspaceSelection.status, 404);
+  await assertAppPageUnavailable(unknownWorkspaceSelection);
   const ambiguousWorkspaceSelection = await appPageRequest(
     `/app?workspaceId=${firstWorkspace.id}&workspaceId=${secondWorkspace.id}`,
     cookie,
   );
-  assert.equal(ambiguousWorkspaceSelection.status, 404);
+  await assertAppPageUnavailable(ambiguousWorkspaceSelection);
 
   const persistenceCommitments = await testCommitmentPersistence({
     workspaceId: firstWorkspace.id,
@@ -1177,7 +1192,7 @@ try {
     `/app?workspaceId=${firstWorkspace.id}`,
     secondCookie,
   );
-  assert.equal(removedMemberCannotSelectWorkspace.status, 404);
+  await assertAppPageUnavailable(removedMemberCannotSelectWorkspace, ['Product Team']);
 
   const readdedMemberResponse = await workspaceRequest(
     `/api/workspaces/${firstWorkspace.id}/members`,
@@ -1312,8 +1327,7 @@ try {
     `/app/settings?workspaceId=${thirdWorkspace.id}`,
     cookie,
   );
-  assert.equal(firstUserCannotSelectThirdWorkspace.status, 404);
-  assert.doesNotMatch(await firstUserCannotSelectThirdWorkspace.text(), /Customer Success/);
+  await assertAppPageUnavailable(firstUserCannotSelectThirdWorkspace, ['Customer Success']);
 
   const logout = await authRequest('sign-out', {}, cookie);
   assert.ok(logout.ok, 'Logout should complete successfully.');
