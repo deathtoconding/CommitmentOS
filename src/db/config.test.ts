@@ -9,9 +9,25 @@ describe('getDatabaseUrl', () => {
     expect(getDatabaseUrl('postgres://user@localhost/app')).toBe('postgres://user@localhost/app');
   });
 
-  it('requires a connection URL', () => {
-    expect(() => getDatabaseUrl(undefined)).toThrow('DATABASE_URL is required');
+  it('requires a connection URL when the supplied value is empty', () => {
+    expect(() => getDatabaseUrl('')).toThrow('DATABASE_URL is required');
     expect(() => getDatabaseUrl('  ')).toThrow('DATABASE_URL is required');
+  });
+
+  it('uses DATABASE_URL when no explicit value is provided', () => {
+    const previousValue = process.env.DATABASE_URL;
+    const url = 'postgresql://user:secret@localhost:5432/commitmentos';
+
+    process.env.DATABASE_URL = url;
+    try {
+      expect(getDatabaseUrl()).toBe(url);
+    } finally {
+      if (previousValue === undefined) {
+        delete process.env.DATABASE_URL;
+      } else {
+        process.env.DATABASE_URL = previousValue;
+      }
+    }
   });
 
   it('rejects malformed URLs, non-PostgreSQL protocols, and missing database names', () => {
