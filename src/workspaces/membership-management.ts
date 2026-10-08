@@ -97,10 +97,11 @@ export async function addWorkspaceMember(
     const [targetUser] = await transaction
       .select({ id: user.id, name: user.name, email: user.email })
       .from(user)
-      .where(eq(user.email, email))
+      .where(and(eq(user.email, email), eq(user.emailVerified, true)))
       .limit(1);
 
     if (!targetUser) {
+      // Do not enroll an account until its mailbox identity has been verified.
       return { status: 'user-not-found' };
     }
 

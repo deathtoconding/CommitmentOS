@@ -25,7 +25,7 @@ All endpoints require an authenticated Better Auth session and return `401 UNAUT
 - `GET /api/workspaces` — lists only the caller's memberships and their workspaces.
 - `GET /api/workspaces/:id` — retrieves a workspace only when the caller has a matching membership. Missing and non-member workspaces both return `404 NOT_FOUND` to avoid disclosing tenant existence.
 - `GET /api/workspaces/:id/members` — any workspace member can list the workspace's member account details and roles. The query is scoped to the authorized workspace.
-- `POST /api/workspaces/:id/members` — `OWNER` only. Accepts `{ "email": "..." }` and adds an already-registered account as `MEMBER`. Unknown accounts return `404 USER_NOT_FOUND`; duplicate membership returns `409 ALREADY_MEMBER`. This increment does not send invitations or create pending invite tokens.
+- `POST /api/workspaces/:id/members` — `OWNER` only. Accepts `{ "email": "..." }` and adds an already-registered account whose email address is verified as `MEMBER`. Unknown and unverified accounts both return `404 USER_NOT_FOUND`; duplicate membership returns `409 ALREADY_MEMBER`. This increment does not send invitations or create pending invite tokens. Email-verification delivery is not implemented yet, so this guard intentionally fails closed until a verified enrollment flow exists.
 - `PATCH /api/workspaces/:id/members/:userId` — `OWNER` only. Accepts `{ "role": "OWNER" | "MEMBER" }` and updates the selected member's role.
 - `DELETE /api/workspaces/:id/members/:userId` — `OWNER` only. Removes the selected membership.
 

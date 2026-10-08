@@ -881,6 +881,40 @@ try {
   assert.equal(emptySecondUserList.status, 200);
   assert.deepEqual((await emptySecondUserList.json()).workspaces, []);
 
+  const unverifiedMemberResponse = await workspaceRequest(
+    `/api/workspaces/${firstWorkspace.id}/members`,
+    {
+      method: 'POST',
+      cookie,
+      body: { email: secondEmail },
+    },
+  );
+  assert.equal(
+    unverifiedMemberResponse.status,
+    404,
+    'An unverified email address must not be added to a workspace.',
+  );
+  const selfVerificationAttempt = await authRequest(
+    'update-user',
+    { emailVerified: true },
+    secondCookie,
+  );
+  assert.equal(
+    selfVerificationAttempt.ok,
+    false,
+    'Users must not be able to mark their own email address as verified.',
+  );
+  const unverifiedAccount = await pool.query(
+    'SELECT email_verified FROM commitmentos."user" WHERE id = $1',
+    [secondRegistrationResult.user.id],
+  );
+  assert.equal(unverifiedAccount.rows[0]?.email_verified, false);
+
+  // Simulate a verified account record; the email-verification delivery flow is not implemented here.
+  await pool.query('UPDATE commitmentos."user" SET email_verified = true WHERE id = $1', [
+    secondRegistrationResult.user.id,
+  ]);
+
   const addMemberResponse = await workspaceRequest(`/api/workspaces/${firstWorkspace.id}/members`, {
     method: 'POST',
     cookie,
