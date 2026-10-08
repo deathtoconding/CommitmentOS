@@ -1341,9 +1341,13 @@ try {
 
   console.log('Authentication, workspace, and commitment integration checks passed.');
 } catch (error) {
+  const stackFrame =
+    error instanceof Error
+      ? error.stack?.split('\n').find((line) => line.includes('test-auth-integration.mjs:'))
+      : undefined;
   const diagnostic =
     error instanceof Error
-      ? (error.stack ?? `${error.name}: ${error.message}`).split('\n').slice(0, 3).join('\n')
+      ? `${error.name}: ${error.message}${stackFrame ? `\n${stackFrame.trim()}` : ''}`
       : String(error);
   const escapedDiagnostic = diagnostic
     .replaceAll('%', '%25')
