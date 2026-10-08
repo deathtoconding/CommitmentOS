@@ -245,7 +245,6 @@ export async function AppSectionPage({
     notFound();
   }
   const workspace = resolution.status === 'selected' ? resolution.workspace : null;
-  const hasWorkspaceSwitchNotice = params.notice === 'workspace-switched' && workspace !== null;
 
   const pageTitle = section === 'settings' ? 'Settings' : sectionCopy[section].title;
   const pageDescription =
@@ -268,15 +267,6 @@ export async function AppSectionPage({
           </div>
         ) : null}
       </header>
-
-      {hasWorkspaceSwitchNotice ? (
-        <p className="app-success-notice" role="status">
-          <span aria-hidden="true" className="app-success-check">
-            ✓
-          </span>
-          Switched to {workspace.name}.
-        </p>
-      ) : null}
 
       {section === 'settings' ? (
         <SettingsPanel

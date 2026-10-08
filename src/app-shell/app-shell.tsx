@@ -126,6 +126,11 @@ export function AppShell({ children, user, workspaces }: AppShellProps) {
     : requestedWorkspaceId === undefined
       ? workspaces[0]
       : selectedWorkspace;
+  const noticeValues = searchParams.getAll('notice');
+  const workspaceSwitchSuccessMessage =
+    noticeValues.length === 1 && noticeValues[0] === 'workspace-switched' && activeWorkspace
+      ? `Switched to ${activeWorkspace.name}.`
+      : null;
   const activeSection = sectionNames[pathname] ?? 'Workspace';
 
   function selectWorkspace(nextWorkspaceId: string) {
@@ -297,7 +302,17 @@ export function AppShell({ children, user, workspaces }: AppShellProps) {
           </div>
         </header>
 
-        <div className="app-content">{children}</div>
+        <div className="app-content">
+          {workspaceSwitchSuccessMessage ? (
+            <p className="app-success-notice" role="status">
+              <span aria-hidden="true" className="app-success-check">
+                ✓
+              </span>
+              {workspaceSwitchSuccessMessage}
+            </p>
+          ) : null}
+          {children}
+        </div>
       </main>
     </div>
   );

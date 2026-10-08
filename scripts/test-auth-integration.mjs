@@ -553,6 +553,7 @@ try {
     `/app?workspaceId=${secondWorkspace.id}&notice=workspace-switched`,
     cookie,
   );
+  assert.equal(workspaceSwitchNotice.status, 200);
   assert.match(await workspaceSwitchNotice.text(), /Switched to Operations/);
 
   const secondRegistration = await authRequest('sign-up/email', {
