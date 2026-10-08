@@ -1,7 +1,19 @@
 import { randomUUID } from 'node:crypto';
 import { and, eq, sql } from 'drizzle-orm';
 import { database } from '../db/client';
-import { user, workspace, workspaceMember, type WorkspaceRole } from '../db/schema';
+import {
+  user,
+  workspace,
+  workspaceAuditEvent,
+  workspaceMember,
+  type WorkspaceRole,
+} from '../db/schema';
+import {
+  workspaceMemberAddedAuditEvent,
+  workspaceMemberRemovedAuditEvent,
+  workspaceMemberRoleChangedAuditEvent,
+  type WorkspaceAuditEventDraft,
+} from './audit-model';
 
 type WorkspaceTransaction = Parameters<Parameters<typeof database.transaction>[0]>[0];
 
@@ -83,6 +95,21 @@ async function countOwners(
   return ownerCount?.count ?? 0;
 }
 
+async function persistWorkspaceAuditEvent(
+  transaction: WorkspaceTransaction,
+  workspaceId: string,
+  actorUserId: string,
+  event: WorkspaceAuditEventDraft,
+): Promise<void> {
+  await transaction.insert(workspaceAuditEvent).values({
+    id: randomUUID(),
+    workspaceId,
+    actorUserId,
+    ...event,
+    occurredAt: new Date(),
+  });
+}
+
 export async function addWorkspaceMember(
   workspaceId: string,
   actorUserId: string,
@@ -124,6 +151,13 @@ export async function addWorkspaceMember(
     if (!membership) {
       return { status: 'already-member' };
     }
+
+    await persistWorkspaceAuditEvent(
+      transaction,
+      workspaceId,
+      actorUserId,
+      workspaceMemberAddedAuditEvent(targetUser.id),
+    );
 
     return {
       status: 'created',
@@ -187,6 +221,13 @@ export async function updateWorkspaceMemberRole(
       return { status: 'member-not-found' };
     }
 
+    await persistWorkspaceAuditEvent(
+      transaction,
+      workspaceId,
+      actorUserId,
+      workspaceMemberRoleChangedAuditEvent(targetUserId, targetMembership.role, role),
+    );
+
     return {
       status: 'updated',
       member: { ...targetMembership, role: updatedMembership.role },
@@ -231,6 +272,13 @@ export async function removeWorkspaceMember(
     if (!removedMembership) {
       return { status: 'member-not-found' };
     }
+
+    await persistWorkspaceAuditEvent(
+      transaction,
+      workspaceId,
+      actorUserId,
+      workspaceMemberRemovedAuditEvent(targetUserId, targetMembership.role),
+    );
 
     return { status: 'removed', memberId: removedMembership.id };
   });

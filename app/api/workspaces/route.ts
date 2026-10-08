@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { database } from '@/db/client';
-import { workspace, workspaceMember } from '@/db/schema';
+import { workspace, workspaceAuditEvent, workspaceMember } from '@/db/schema';
+import { workspaceCreatedAuditEvent } from '@/workspaces/audit-model';
 import { listUserWorkspaces } from '@/workspaces/queries';
 import { requireSession } from '@/workspaces/authorization';
 import { readJsonRequestBody } from '@/http/request-body';
@@ -62,6 +63,13 @@ export async function POST(request: Request): Promise<Response> {
         workspaceId: newWorkspace.id,
         userId: sessionResult.value.user.id,
         role: 'OWNER',
+      });
+      const workspaceCreatedEvent = workspaceCreatedAuditEvent(sessionResult.value.user.id);
+      await transaction.insert(workspaceAuditEvent).values({
+        id: randomUUID(),
+        workspaceId: newWorkspace.id,
+        actorUserId: sessionResult.value.user.id,
+        ...workspaceCreatedEvent,
       });
 
       return { ...newWorkspace, role: 'OWNER' as const };

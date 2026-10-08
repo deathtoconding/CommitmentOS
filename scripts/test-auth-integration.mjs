@@ -482,6 +482,55 @@ try {
   workspaceIds.push(firstWorkspace.id);
   assert.equal(firstWorkspace.name, 'Product Team', 'Workspace names should be trimmed.');
   assert.equal(firstWorkspace.role, 'OWNER', 'Workspace creators must become owners.');
+  const workspaceCreatedEvents = await pool.query(
+    `SELECT id, actor_user_id, target_user_id, event_type, details
+     FROM commitmentos.workspace_audit_event
+     WHERE workspace_id = $1`,
+    [firstWorkspace.id],
+  );
+  assert.equal(workspaceCreatedEvents.rows.length, 1);
+  const workspaceCreatedEvent = workspaceCreatedEvents.rows[0];
+  assert.equal(workspaceCreatedEvent.actor_user_id, registrationResult.user.id);
+  assert.equal(workspaceCreatedEvent.target_user_id, registrationResult.user.id);
+  assert.equal(workspaceCreatedEvent.event_type, 'WORKSPACE_CREATED');
+  assert.deepEqual(workspaceCreatedEvent.details, { role: 'OWNER' });
+  await assertDatabaseRejects(
+    'DELETE FROM commitmentos.workspace WHERE id = $1',
+    [firstWorkspace.id],
+    '23503',
+    'A workspace with immutable administration history must not be deleted.',
+  );
+  await assertDatabaseRejects(
+    'DELETE FROM commitmentos."user" WHERE id = $1',
+    [registrationResult.user.id],
+    '23503',
+    'Users referenced by immutable workspace history must not be deleted.',
+  );
+  await assertDatabaseRejects(
+    `UPDATE commitmentos.workspace_audit_event
+     SET details = details || '{"tampered": true}'::jsonb WHERE id = $1`,
+    [workspaceCreatedEvent.id],
+    '55000',
+    'Workspace audit events must reject updates.',
+  );
+  await assertDatabaseRejects(
+    'DELETE FROM commitmentos.workspace_audit_event WHERE id = $1',
+    [workspaceCreatedEvent.id],
+    '55000',
+    'Workspace audit events must reject deletes.',
+  );
+  const workspaceAuditTruncateClient = await pool.connect();
+  try {
+    await workspaceAuditTruncateClient.query('BEGIN');
+    await assert.rejects(
+      workspaceAuditTruncateClient.query('TRUNCATE TABLE commitmentos.workspace_audit_event'),
+      (error) => error.code === '55000',
+      'Workspace audit events must reject truncation.',
+    );
+  } finally {
+    await workspaceAuditTruncateClient.query('ROLLBACK');
+    workspaceAuditTruncateClient.release();
+  }
 
   const authenticatedWorkspacePage = await appPageRequest(
     `/app?workspaceId=${firstWorkspace.id}`,
@@ -915,6 +964,49 @@ try {
     secondRegistrationResult.user.id,
   ]);
 
+  const failedMembershipAuditSuffix = randomUUID().replaceAll('-', '');
+  const rejectMembershipAuditFunction = `integration_reject_workspace_audit_${failedMembershipAuditSuffix}`;
+  const rejectMembershipAuditTrigger = `integration_reject_workspace_audit_${failedMembershipAuditSuffix}`;
+  try {
+    await pool.query(`
+      CREATE FUNCTION commitmentos."${rejectMembershipAuditFunction}"()
+      RETURNS trigger
+      LANGUAGE plpgsql
+      AS $audit$
+      BEGIN
+        IF NEW.event_type = 'MEMBER_ADDED' THEN
+          RAISE EXCEPTION 'simulated workspace audit persistence failure' USING ERRCODE = '55000';
+        END IF;
+        RETURN NEW;
+      END;
+      $audit$
+    `);
+    await pool.query(`
+      CREATE TRIGGER "${rejectMembershipAuditTrigger}"
+      BEFORE INSERT ON commitmentos.workspace_audit_event
+      FOR EACH ROW EXECUTE FUNCTION commitmentos."${rejectMembershipAuditFunction}"()
+    `);
+
+    const failedMemberAdd = await workspaceRequest(`/api/workspaces/${firstWorkspace.id}/members`, {
+      method: 'POST',
+      cookie,
+      body: { email: secondEmail },
+    });
+    assert.equal(failedMemberAdd.status, 500);
+    const rolledBackMembership = await pool.query(
+      `SELECT COUNT(*)::int AS count
+       FROM commitmentos.workspace_member
+       WHERE workspace_id = $1 AND user_id = $2`,
+      [firstWorkspace.id, secondRegistrationResult.user.id],
+    );
+    assert.equal(rolledBackMembership.rows[0].count, 0);
+  } finally {
+    await pool.query(
+      `DROP TRIGGER IF EXISTS "${rejectMembershipAuditTrigger}" ON commitmentos.workspace_audit_event`,
+    );
+    await pool.query(`DROP FUNCTION IF EXISTS commitmentos."${rejectMembershipAuditFunction}"()`);
+  }
+
   const addMemberResponse = await workspaceRequest(`/api/workspaces/${firstWorkspace.id}/members`, {
     method: 'POST',
     cookie,
@@ -924,6 +1016,20 @@ try {
   const addedMember = (await addMemberResponse.json()).member;
   assert.equal(addedMember.userId, secondRegistrationResult.user.id);
   assert.equal(addedMember.role, 'MEMBER');
+  const memberAddedEvents = await pool.query(
+    `SELECT actor_user_id, target_user_id, event_type, details
+     FROM commitmentos.workspace_audit_event
+     WHERE workspace_id = $1 AND event_type = 'MEMBER_ADDED'`,
+    [firstWorkspace.id],
+  );
+  assert.deepEqual(memberAddedEvents.rows, [
+    {
+      actor_user_id: registrationResult.user.id,
+      target_user_id: secondRegistrationResult.user.id,
+      event_type: 'MEMBER_ADDED',
+      details: { role: 'MEMBER' },
+    },
+  ]);
 
   const newlyAddedMemberWorkspacePage = await appPageRequest(
     `/app/settings?workspaceId=${firstWorkspace.id}`,
@@ -1427,6 +1533,20 @@ try {
   );
   assert.equal(ownerRemoveMemberResponse.status, 200, 'Owners should be able to remove members.');
   assert.equal((await ownerRemoveMemberResponse.json()).removed, true);
+  const memberRemovedEvents = await pool.query(
+    `SELECT actor_user_id, target_user_id, event_type, details
+     FROM commitmentos.workspace_audit_event
+     WHERE workspace_id = $1 AND event_type = 'MEMBER_REMOVED'
+       AND target_user_id = $2`,
+    [firstWorkspace.id, secondRegistrationResult.user.id],
+  );
+  assert.ok(
+    memberRemovedEvents.rows.some(
+      (event) =>
+        event.actor_user_id === registrationResult.user.id && event.details.role === 'MEMBER',
+    ),
+    'Member removals must retain an immutable record of actor, target, and prior role.',
+  );
   const removedMemberCannotSelectWorkspace = await appPageRequest(
     `/app?workspaceId=${firstWorkspace.id}`,
     secondCookie,
@@ -1463,6 +1583,22 @@ try {
   );
   assert.equal(promoteMemberResponse.status, 200, 'Owners should be able to promote a member.');
   assert.equal((await promoteMemberResponse.json()).member.role, 'OWNER');
+  const roleChangeEvents = await pool.query(
+    `SELECT actor_user_id, target_user_id, event_type, details
+     FROM commitmentos.workspace_audit_event
+     WHERE workspace_id = $1 AND event_type = 'MEMBER_ROLE_CHANGED'
+       AND target_user_id = $2`,
+    [firstWorkspace.id, secondRegistrationResult.user.id],
+  );
+  assert.ok(
+    roleChangeEvents.rows.some(
+      (event) =>
+        event.actor_user_id === registrationResult.user.id &&
+        event.details.fromRole === 'MEMBER' &&
+        event.details.toRole === 'OWNER',
+    ),
+    'Role changes must be recorded with their actor, target, and before/after roles.',
+  );
 
   const concurrentOwnerDemotions = await Promise.all([
     workspaceRequest(`/api/workspaces/${firstWorkspace.id}/members/${registrationResult.user.id}`, {
@@ -1643,6 +1779,21 @@ try {
     await cleanupClient.query(
       'ALTER TABLE commitmentos.commitment_audit_event ENABLE TRIGGER USER',
     );
+    await cleanupClient.query(
+      'ALTER TABLE commitmentos.workspace_audit_event DISABLE TRIGGER USER',
+    );
+    await cleanupClient.query(
+      `DELETE FROM commitmentos.workspace_audit_event
+       WHERE workspace_id = ANY($1::text[])
+          OR actor_user_id IN (
+            SELECT id FROM commitmentos."user" WHERE email = ANY($2::text[])
+          )
+          OR target_user_id IN (
+            SELECT id FROM commitmentos."user" WHERE email = ANY($2::text[])
+          )`,
+      [workspaceIds, testEmails],
+    );
+    await cleanupClient.query('ALTER TABLE commitmentos.workspace_audit_event ENABLE TRIGGER USER');
     await cleanupClient.query('DELETE FROM commitmentos.workspace WHERE id = ANY($1::text[])', [
       workspaceIds,
     ]);

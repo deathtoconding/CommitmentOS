@@ -5,6 +5,7 @@
 - `commitmentos.workspace` stores a workspace name and creation timestamp.
 - `commitmentos.workspace_member` joins a workspace to an existing Better Auth user. A user can have memberships in multiple workspaces.
 - Membership roles are the database enum `OWNER` and `MEMBER`. Workspace creation assigns the creator `OWNER` in the same database transaction that creates the workspace.
+- `commitmentos.workspace_audit_event` records immutable workspace-creation and membership-administration events with an actor, target user, event type, timestamp, and minimized role details.
 - Both membership foreign keys are non-null and cascade on deletion. A unique constraint on `(workspace_id, user_id)` prevents duplicate membership. That composite index serves workspace lookups; a separate `user_id` index supports listing a user's memberships.
 
 ## Reusable authorization checks
@@ -30,6 +31,10 @@ All endpoints require an authenticated Better Auth session and return `401 UNAUT
 - `DELETE /api/workspaces/:id/members/:userId` — `OWNER` only. Removes the selected membership.
 
 A member who attempts administration receives `403 FORBIDDEN`; unknown workspaces and target memberships return `404 NOT_FOUND`. The final `OWNER` cannot be demoted or removed (`409 FINAL_OWNER_REQUIRED`). Every owner-only mutation rechecks authorization inside a database transaction and locks the workspace row. Demotions and removals count owners before applying the change, serializing concurrent membership mutations so they cannot remove or demote the final owner.
+
+## Immutable workspace-administration history
+
+Workspace creation, member addition, role changes, and member removal append rows to `commitmentos.workspace_audit_event` in the same PostgreSQL transaction as the mutation. Events are attributed to the authenticated actor and identify the target user; details contain only roles and do not copy account emails or names. Foreign keys retain the referenced workspace and users, and database triggers reject update, delete, and truncate operations. If an audit insert fails, the corresponding workspace or membership mutation rolls back. The current application does not expose a workspace-audit read route or UI.
 
 There is no server-trusted “current workspace” value. The COM-112 shell may carry the selected `workspaceId` in the page URL as a UI selector only; each `/app` server page resolves it against memberships queried for the authenticated session user. Unknown and non-member selections render the same not-found state, and changing the URL alone never grants access. App pages are dynamically rendered with `private, no-store` response headers; section navigation uses full document requests, and pages restored from the browser back-forward cache are reloaded, so a previous workspace's client data is not reused after switching. Workspace APIs continue to run their own membership guard on every request.
 

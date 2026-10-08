@@ -63,13 +63,17 @@ try {
         ('table', 'verification'),
         ('table', 'workspace'),
         ('table', 'workspace_member'),
+        ('table', 'workspace_audit_event'),
         ('table', 'commitment'),
         ('table', 'commitment_audit_event'),
         ('type', 'workspace_role'),
+        ('type', 'workspace_audit_event_type'),
         ('type', 'commitment_status'),
         ('type', 'commitment_audit_event_type'),
         ('index', 'workspace_member_workspace_user_unique'),
         ('index', 'workspace_member_user_id_idx'),
+        ('index', 'workspace_audit_event_workspace_occurred_idx'),
+        ('index', 'workspace_audit_event_target_occurred_idx'),
         ('index', 'commitment_workspace_status_due_at_idx'),
         ('index', 'commitment_workspace_created_at_id_idx'),
         ('index', 'commitment_workspace_owner_user_id_idx'),
@@ -77,7 +81,9 @@ try {
         ('index', 'commitment_audit_event_workspace_commitment_occurred_idx'),
         ('index', 'commitment_audit_event_workspace_occurred_idx'),
         ('trigger', 'commitment_audit_event_no_update_or_delete'),
-        ('trigger', 'commitment_audit_event_no_truncate')
+        ('trigger', 'commitment_audit_event_no_truncate'),
+        ('trigger', 'workspace_audit_event_no_update_or_delete'),
+        ('trigger', 'workspace_audit_event_no_truncate')
       ) AS expected(kind, name)
       ORDER BY expected.kind, expected.name
     `);

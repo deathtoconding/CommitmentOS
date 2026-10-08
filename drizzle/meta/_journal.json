@@ -43,6 +43,13 @@
       "when": 1791495815815,
       "tag": "0005_commitment_inbox_order_index",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1791496460684,
+      "tag": "0006_workspace_audit_events",
+      "breakpoints": true
     }
   ]
 }

@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm';
 import { COMMITMENT_AUDIT_EVENT_TYPES } from '../../commitments/audit-model';
 import { COMMITMENT_STATUSES } from '../../commitments/model';
+import { WORKSPACE_AUDIT_EVENT_TYPES } from '../../workspaces/audit-model';
 import {
   boolean,
   check,
@@ -107,6 +108,41 @@ export const workspaceMember = commitmentosSchema.table(
 );
 
 export type WorkspaceRole = (typeof workspaceRole.enumValues)[number];
+
+export const workspaceAuditEventType = commitmentosSchema.enum(
+  'workspace_audit_event_type',
+  WORKSPACE_AUDIT_EVENT_TYPES,
+);
+
+export const workspaceAuditEvent = commitmentosSchema.table(
+  'workspace_audit_event',
+  {
+    id: text('id').primaryKey(),
+    workspaceId: text('workspace_id')
+      .notNull()
+      .references(() => workspace.id, { onDelete: 'restrict' }),
+    actorUserId: text('actor_user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'restrict' }),
+    targetUserId: text('target_user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'restrict' }),
+    eventType: workspaceAuditEventType('event_type').notNull(),
+    details: jsonb('details').$type<Record<string, unknown>>().default({}).notNull(),
+    occurredAt: timestamp('occurred_at', { withTimezone: true, mode: 'date' })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    check('workspace_audit_event_details_object', sql`jsonb_typeof("details") = 'object'`),
+    index('workspace_audit_event_workspace_occurred_idx').on(table.workspaceId, table.occurredAt),
+    index('workspace_audit_event_target_occurred_idx').on(
+      table.workspaceId,
+      table.targetUserId,
+      table.occurredAt,
+    ),
+  ],
+);
 
 export const commitmentStatus = commitmentosSchema.enum('commitment_status', COMMITMENT_STATUSES);
 
