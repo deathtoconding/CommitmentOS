@@ -21,6 +21,7 @@ export const loginSchema = z
     email: emailSchema,
     password: z.string().min(1).max(128),
     rememberMe: z.boolean().optional(),
+    callbackURL: z.literal('/login?verified=1').optional(),
   })
   .strict();
 

@@ -56,10 +56,21 @@ describe('authentication input schemas', () => {
     ).toBe(false);
   });
 
-  it('accepts sign-in input and rejects invalid addresses or empty passwords', () => {
+  it('accepts sign-in input and rejects invalid addresses, passwords, or redirects', () => {
     expect(
-      loginSchema.safeParse({ email: 'alex@example.com', password: 'not-the-password' }).success,
+      loginSchema.safeParse({
+        email: 'alex@example.com',
+        password: 'not-the-password',
+        callbackURL: '/login?verified=1',
+      }).success,
     ).toBe(true);
+    expect(
+      loginSchema.safeParse({
+        email: 'alex@example.com',
+        password: 'not-the-password',
+        callbackURL: 'https://attacker.test',
+      }).success,
+    ).toBe(false);
     expect(loginSchema.safeParse({ email: 'invalid', password: 'something' }).success).toBe(false);
     expect(loginSchema.safeParse({ email: 'alex@example.com', password: '' }).success).toBe(false);
   });

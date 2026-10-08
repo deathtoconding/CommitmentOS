@@ -65,7 +65,10 @@ export function AuthForm({ mode }: AuthFormProps) {
 
     setIsSubmitting(true);
     try {
-      const result = await authClient.signIn.email(parsed.data);
+      const result = await authClient.signIn.email({
+        ...parsed.data,
+        callbackURL: '/login?verified=1',
+      });
       if (result.error) {
         setError(
           result.error.code === 'EMAIL_NOT_VERIFIED'
