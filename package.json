@@ -1,0 +1,64 @@
+{
+  "name": "commitmentos",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "npm@10.9.8",
+  "engines": {
+    "node": ">=22.0.0 <23"
+  },
+  "scripts": {
+    "dev": "next dev --hostname 0.0.0.0",
+    "build": "next build",
+    "start": "next start --hostname 0.0.0.0",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "next typegen && tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:integration": "node scripts/test-auth-integration.mjs",
+    "test:jobs-integration": "tsx scripts/test-jobs-integration.ts",
+    "test:source-messages-integration": "node --conditions=react-server --import tsx scripts/test-source-messages-integration.ts",
+    "test:gmail-integration": "node --conditions=react-server --import tsx scripts/test-gmail-integration.ts",
+    "worker": "tsx src/jobs/worker.ts",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:check": "node scripts/check-db.mjs"
+  },
+  "dependencies": {
+    "better-auth": "1.7.7",
+    "bullmq": "6.3.11",
+    "dotenv": "18.0.6",
+    "drizzle-orm": "0.45.4",
+    "ioredis": "6.0.0",
+    "jose": "6.2.12",
+    "next": "16.4.0",
+    "nodemailer": "10.0.16",
+    "pg": "8.23.1",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "server-only": "0.0.1",
+    "tsx": "4.23.15",
+    "zod": "4.6.5"
+  },
+  "overrides": {
+    "esbuild": "0.25.12"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "22.20.5",
+    "@types/nodemailer": "8.0.2",
+    "@types/pg": "8.23.1",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "drizzle-kit": "0.31.11",
+    "eslint": "10.12.0",
+    "globals": "17.13.0",
+    "prettier": "3.9.9",
+    "smtp-server": "3.19.18",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.56.0",
+    "vitest": "5.0.3"
+  }
+}

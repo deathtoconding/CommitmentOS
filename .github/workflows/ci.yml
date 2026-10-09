@@ -1,0 +1,100 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - 'arena/**'
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Quality and build
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: commitmentos
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d commitmentos"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/commitmentos
+      BETTER_AUTH_SECRET: commitmentos-ci-only-secret-do-not-use-in-production
+      BETTER_AUTH_URL: http://localhost:3000
+      SMTP_HOST: 127.0.0.1
+      SMTP_PORT: 3142
+      SMTP_USER: commitmentos-ci
+      SMTP_PASSWORD: commitmentos-ci-smtp-password
+      EMAIL_FROM: noreply@commitmentos.test
+      REDIS_URL: redis://localhost:6379
+      JOBS_METRICS_TOKEN: commitmentos-ci-metrics-token-do-not-use-in-production
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check dependency security
+        run: npm audit --audit-level=moderate
+
+      - name: Check formatting
+        run: npm run format:check
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Apply database migrations
+        run: npm run db:migrate
+
+      - name: Verify PostgreSQL connection and schema
+        run: npm run db:check
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build production application
+        run: npm run build
+
+      - name: Authentication, workspace, and commitment integration tests
+        run: npm run test:integration
+
+      - name: PostgreSQL source-message integration tests
+        run: npm run test:source-messages-integration
+
+      - name: PostgreSQL Gmail OAuth-state integration tests
+        run: npm run test:gmail-integration
+
+      - name: PostgreSQL and Redis/BullMQ job integration tests
+        run: npm run test:jobs-integration

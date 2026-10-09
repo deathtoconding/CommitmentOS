@@ -1,0 +1,1 @@
+CREATE INDEX "commitment_workspace_created_at_id_idx" ON "commitmentos"."commitment" USING btree ("workspace_id","created_at","id");

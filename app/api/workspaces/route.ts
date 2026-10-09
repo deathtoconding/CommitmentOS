@@ -1,0 +1,82 @@
+import { randomUUID } from 'node:crypto';
+import { database } from '@/db/client';
+import { workspace, workspaceAuditEvent, workspaceMember } from '@/db/schema';
+import { workspaceCreatedAuditEvent } from '@/workspaces/audit-model';
+import { listUserWorkspaces } from '@/workspaces/queries';
+import { requireSession } from '@/workspaces/authorization';
+import { readJsonRequestBody } from '@/http/request-body';
+import { payloadTooLargeResponse } from '@/http/responses';
+import { createWorkspaceSchema } from '@/workspaces/schemas';
+import {
+  internalErrorResponse,
+  invalidRequestResponse,
+  workspaceResponse,
+} from '@/workspaces/responses';
+
+export async function GET(request: Request): Promise<Response> {
+  const sessionResult = await requireSession(request.headers);
+  if (!sessionResult.authorized) {
+    return sessionResult.response;
+  }
+
+  try {
+    const workspaces = await listUserWorkspaces(sessionResult.value.user.id);
+    return workspaceResponse({ workspaces });
+  } catch {
+    return internalErrorResponse();
+  }
+}
+
+export async function POST(request: Request): Promise<Response> {
+  const sessionResult = await requireSession(request.headers);
+  if (!sessionResult.authorized) {
+    return sessionResult.response;
+  }
+
+  const body = await readJsonRequestBody(request);
+  if (!body.ok) {
+    return body.reason === 'too-large' ? payloadTooLargeResponse() : invalidRequestResponse();
+  }
+
+  const parsed = createWorkspaceSchema.safeParse(body.value);
+  if (!parsed.success) {
+    return invalidRequestResponse();
+  }
+
+  try {
+    const createdWorkspace = await database.transaction(async (transaction) => {
+      const [newWorkspace] = await transaction
+        .insert(workspace)
+        .values({ id: randomUUID(), name: parsed.data.name })
+        .returning({
+          id: workspace.id,
+          name: workspace.name,
+          createdAt: workspace.createdAt,
+        });
+
+      if (!newWorkspace) {
+        throw new Error('Workspace insert returned no row.');
+      }
+
+      await transaction.insert(workspaceMember).values({
+        id: randomUUID(),
+        workspaceId: newWorkspace.id,
+        userId: sessionResult.value.user.id,
+        role: 'OWNER',
+      });
+      const workspaceCreatedEvent = workspaceCreatedAuditEvent(sessionResult.value.user.id);
+      await transaction.insert(workspaceAuditEvent).values({
+        id: randomUUID(),
+        workspaceId: newWorkspace.id,
+        actorUserId: sessionResult.value.user.id,
+        ...workspaceCreatedEvent,
+      });
+
+      return { ...newWorkspace, role: 'OWNER' as const };
+    });
+
+    return workspaceResponse({ workspace: createdWorkspace }, 201);
+  } catch {
+    return internalErrorResponse();
+  }
+}
