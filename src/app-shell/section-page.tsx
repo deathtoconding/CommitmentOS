@@ -4,6 +4,7 @@ import type { ReactNode } from 'react';
 import { getAuthenticatedSession } from '@/auth/session';
 import { CommitmentInbox } from '@/commitments/commitment-inbox';
 import { CommitmentDashboard } from '@/commitments/commitment-dashboard';
+import { GmailIntegrationsPanel } from '@/integrations/gmail/gmail-integrations-panel';
 import { getWorkspaceCommitmentSummary, listWorkspaceCommitments } from '@/commitments/service';
 import { resolveActiveWorkspace } from '@/workspaces/active-workspace';
 import { listUserWorkspaces } from '@/workspaces/queries';
@@ -55,11 +56,10 @@ const sectionCopy: Record<Exclude<AppSection, 'settings'>, SectionCopy> = {
   },
   integrations: {
     eyebrow: 'Integrations',
-    title: 'Bring your tools together.',
-    description: 'Manage the connections that support your workspace.',
+    title: 'Connect the tools your team uses.',
+    description: 'Manage secure, workspace-scoped provider connections.',
     emptyTitle: 'No integrations are configured here.',
-    emptyDescription:
-      'Integration settings will become available in a later step. No provider has been connected from this page.',
+    emptyDescription: 'Connect a supported provider to make its workspace data available.',
     icon: 'integrations',
   },
 };
@@ -288,6 +288,12 @@ export async function AppSectionPage({
         )
       ) : section === 'inbox' && workspace ? (
         <CommitmentInbox commitments={commitments} workspaceId={workspace.id} />
+      ) : section === 'integrations' && workspace ? (
+        <GmailIntegrationsPanel
+          result={typeof params.gmail === 'string' ? params.gmail : undefined}
+          role={workspace.role}
+          workspaceId={workspace.id}
+        />
       ) : workspace ? (
         <EmptyState copy={sectionCopy[section]} />
       ) : (

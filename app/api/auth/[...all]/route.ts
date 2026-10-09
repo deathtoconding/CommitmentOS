@@ -1,7 +1,9 @@
 import { toNextJsHandler } from 'better-auth/next-js';
 import {
-  consumeEmailVerificationToken,
-  isEmailVerificationTokenConsumed,
+  claimEmailVerificationToken,
+  EMAIL_VERIFICATION_CLAIM_HEADER,
+  finalizeEmailVerificationToken,
+  releaseEmailVerificationTokenClaim,
 } from '@/auth/email-verification-token';
 import { loginSchema, registrationSchema } from '@/auth/schemas';
 import { auth } from '@/auth/server';
@@ -16,6 +18,30 @@ function invalidRequest(): Response {
     { code: 'INVALID_AUTH_REQUEST', message: 'Please check the submitted information.' },
     { status: 400 },
   );
+}
+
+function invalidVerificationToken(): Response {
+  return Response.json(
+    {
+      code: 'INVALID_TOKEN',
+      message: 'The email verification link is invalid, expired, or already used.',
+    },
+    {
+      status: 400,
+      headers: {
+        'cache-control': 'no-store',
+        'referrer-policy': 'no-referrer',
+      },
+    },
+  );
+}
+
+async function releaseFailedVerification(token: string, reservationId: string): Promise<void> {
+  try {
+    await releaseEmailVerificationTokenClaim(databasePool, token, reservationId);
+  } catch {
+    // The short reservation lease permits safe recovery if PostgreSQL is temporarily unavailable.
+  }
 }
 
 async function handlePost(request: Request): Promise<Response> {
@@ -69,44 +95,51 @@ async function handlePost(request: Request): Promise<Response> {
 
 async function handleGet(request: Request): Promise<Response> {
   const url = new URL(request.url);
-  if (url.pathname === '/api/auth/verify-email') {
-    const token = url.searchParams.get('token');
-    if (token && (await isEmailVerificationTokenConsumed(databasePool, token))) {
-      return Response.json(
-        {
-          code: 'INVALID_TOKEN',
-          message: 'The email verification link is invalid, expired, or already used.',
-        },
-        {
-          status: 400,
-          headers: {
-            'cache-control': 'no-store',
-            'referrer-policy': 'no-referrer',
-          },
-        },
-      );
-    }
+  const token = url.pathname === '/api/auth/verify-email' ? url.searchParams.get('token') : null;
+  const reservationId = token ? await claimEmailVerificationToken(databasePool, token) : null;
+
+  if (token && !reservationId) return invalidVerificationToken();
+  if (!token || !reservationId) return authHandlers.GET(request);
+
+  const headers = new Headers(request.headers);
+  // Replace any client-supplied value with the server-created claim identifier.
+  headers.set(EMAIL_VERIFICATION_CLAIM_HEADER, reservationId);
+  const claimedRequest = new Request(request.url, {
+    method: 'GET',
+    headers,
+    signal: request.signal,
+  });
+
+  let response: Response;
+  try {
+    response = await authHandlers.GET(claimedRequest);
+  } catch (error) {
+    await releaseFailedVerification(token, reservationId);
+    throw error;
   }
 
-  const response = await authHandlers.GET(request);
-  const token = url.searchParams.get('token');
-  if (url.pathname === '/api/auth/verify-email' && token && response.status === 302) {
-    const location = response.headers.get('location');
-    const callback = location ? new URL(location, url.origin) : null;
-    const errorCode = callback?.searchParams.get('error');
-    const verificationErrorCodes = new Set([
-      'INVALID_TOKEN',
-      'TOKEN_EXPIRED',
-      'USER_NOT_FOUND',
-      'INVALID_USER',
-    ]);
-
-    if (!errorCode || !verificationErrorCodes.has(errorCode)) {
-      // Also consume successful links for accounts verified by another still-valid link.
-      await consumeEmailVerificationToken(databasePool, token);
+  const location = response.headers.get('location');
+  let callback: URL | null = null;
+  if (location) {
+    try {
+      callback = new URL(location, url.origin);
+    } catch {
+      // An invalid redirect is not accepted as successful token redemption.
     }
   }
+  const failed =
+    response.status >= 400 ||
+    (response.status >= 300 &&
+      response.status < 400 &&
+      (!callback || callback.searchParams.has('error')));
 
+  if (failed) {
+    await releaseFailedVerification(token, reservationId);
+    return response;
+  }
+
+  const finalized = await finalizeEmailVerificationToken(databasePool, token, reservationId);
+  if (!finalized) return invalidVerificationToken();
   return response;
 }
 

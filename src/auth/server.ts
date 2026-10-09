@@ -5,8 +5,10 @@ import { APIError } from 'better-auth/api';
 import { database, databasePool } from '@/db/client';
 import { account, rateLimit, session, user, verification } from '@/db/schema';
 import {
-  consumeEmailVerificationToken,
+  EMAIL_VERIFICATION_CLAIM_HEADER,
   EMAIL_VERIFICATION_TOKEN_TTL_SECONDS,
+  finalizeEmailVerificationToken,
+  isEmailVerificationTokenClaimed,
 } from './email-verification-token';
 import { sendPasswordResetEmail, sendVerificationEmail } from './email-delivery';
 import { getAuthEnvironment } from './environment';
@@ -45,7 +47,18 @@ export const auth = betterAuth({
     autoSignInAfterVerification: false,
     async beforeEmailVerification(_user, request) {
       const token = request ? new URL(request.url).searchParams.get('token') : null;
-      if (!token || !(await consumeEmailVerificationToken(databasePool, token))) {
+      const reservationId = request?.headers.get(EMAIL_VERIFICATION_CLAIM_HEADER) ?? '';
+      if (!token || !(await isEmailVerificationTokenClaimed(databasePool, token, reservationId))) {
+        throw APIError.from('BAD_REQUEST', {
+          code: 'INVALID_TOKEN',
+          message: 'The email verification link is invalid, expired, or already used.',
+        });
+      }
+    },
+    async afterEmailVerification(_user, request) {
+      const token = request ? new URL(request.url).searchParams.get('token') : null;
+      const reservationId = request?.headers.get(EMAIL_VERIFICATION_CLAIM_HEADER) ?? '';
+      if (!token || !(await finalizeEmailVerificationToken(databasePool, token, reservationId))) {
         throw APIError.from('BAD_REQUEST', {
           code: 'INVALID_TOKEN',
           message: 'The email verification link is invalid, expired, or already used.',

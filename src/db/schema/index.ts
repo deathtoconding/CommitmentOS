@@ -2,6 +2,10 @@ import { sql } from 'drizzle-orm';
 import { COMMITMENT_AUDIT_EVENT_TYPES } from '../../commitments/audit-model';
 import { COMMITMENT_STATUSES } from '../../commitments/model';
 import { JOB_STATUSES } from '../../jobs/model';
+import {
+  GMAIL_INTEGRATION_AUDIT_EVENT_TYPES,
+  GMAIL_INTEGRATION_STATUSES,
+} from '../../integrations/gmail/model';
 import { WORKSPACE_AUDIT_EVENT_TYPES } from '../../workspaces/audit-model';
 import { SOURCE_MESSAGE_PROVIDERS } from '../../source-messages/model';
 import {
@@ -103,12 +107,27 @@ export const emailVerificationTokenUse = commitmentosSchema.table(
   {
     tokenHash: text('token_hash').primaryKey(),
     expiresAt: timestamp('expires_at', { withTimezone: true, mode: 'date' }).notNull(),
-    consumedAt: timestamp('consumed_at', { withTimezone: true, mode: 'date' })
-      .defaultNow()
-      .notNull(),
+    consumedAt: timestamp('consumed_at', { withTimezone: true, mode: 'date' }).defaultNow(),
+    useStatus: text('use_status').default('CONSUMED').notNull(),
+    reservationId: text('reservation_id'),
+    reservationExpiresAt: timestamp('reservation_expires_at', {
+      withTimezone: true,
+      mode: 'date',
+    }),
   },
   (table) => [
     check('email_verification_token_use_hash_format', sql`"token_hash" ~ '^[a-f0-9]{64}$'`),
+    check(
+      'email_verification_token_use_status_format',
+      sql`"use_status" IN ('RESERVED', 'CONSUMED')`,
+    ),
+    check(
+      'email_verification_token_use_reservation_consistency',
+      sql`("use_status" = 'CONSUMED' AND "consumed_at" IS NOT NULL
+          AND "reservation_expires_at" IS NULL)
+        OR ("use_status" = 'RESERVED' AND "consumed_at" IS NULL
+          AND "reservation_id" IS NOT NULL AND "reservation_expires_at" IS NOT NULL)`,
+    ),
     index('email_verification_token_use_expires_at_idx').on(table.expiresAt),
   ],
 );
@@ -225,6 +244,139 @@ export const sourceMessage = commitmentosSchema.table(
       )`,
     ),
     index('source_message_workspace_created_at_idx').on(table.workspaceId, table.createdAt),
+  ],
+);
+
+export const gmailIntegrationStatus = commitmentosSchema.enum(
+  'gmail_integration_status',
+  GMAIL_INTEGRATION_STATUSES,
+);
+
+export const gmailIntegrationAuditEventType = commitmentosSchema.enum(
+  'gmail_integration_audit_event_type',
+  GMAIL_INTEGRATION_AUDIT_EVENT_TYPES,
+);
+
+export const gmailIntegration = commitmentosSchema.table(
+  'gmail_integration',
+  {
+    id: text('id').primaryKey(),
+    workspaceId: text('workspace_id')
+      .notNull()
+      .references(() => workspace.id, { onDelete: 'restrict' }),
+    providerAccountId: text('provider_account_id').notNull(),
+    providerEmail: text('provider_email').notNull(),
+    status: gmailIntegrationStatus('status').default('CONNECTED').notNull(),
+    scopes: text('scopes').notNull(),
+    credentialsCiphertext: text('credentials_ciphertext'),
+    accessTokenExpiresAt: timestamp('access_token_expires_at', {
+      withTimezone: true,
+      mode: 'date',
+    }),
+    createdByUserId: text('created_by_user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'restrict' }),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).defaultNow().notNull(),
+  },
+  (table) => [
+    unique('gmail_integration_workspace_id_unique').on(table.workspaceId, table.id),
+    unique('gmail_integration_workspace_account_unique').on(
+      table.workspaceId,
+      table.providerAccountId,
+    ),
+    check(
+      'gmail_integration_provider_account_id_format',
+      sql`length("provider_account_id") BETWEEN 1 AND 255
+        AND "provider_account_id" = btrim("provider_account_id")
+        AND "provider_account_id" !~ '[[:cntrl:]]'`,
+    ),
+    check(
+      'gmail_integration_provider_email_format',
+      sql`length("provider_email") BETWEEN 3 AND 320
+        AND "provider_email" = btrim("provider_email")
+        AND "provider_email" ~ '^[^[:space:]@]+@[^[:space:]@]+$'`,
+    ),
+    check(
+      'gmail_integration_scopes_format',
+      sql`"scopes" = 'email https://www.googleapis.com/auth/gmail.readonly openid'`,
+    ),
+    check(
+      'gmail_integration_credentials_status_consistency',
+      sql`("status" = 'DISCONNECTED' AND "credentials_ciphertext" IS NULL
+          AND "access_token_expires_at" IS NULL)
+        OR
+        ("status" <> 'DISCONNECTED' AND "credentials_ciphertext" IS NOT NULL
+          AND "access_token_expires_at" IS NOT NULL)`,
+    ),
+    check(
+      'gmail_integration_ciphertext_format',
+      sql`"credentials_ciphertext" IS NULL OR "credentials_ciphertext" ~ '^v1\\.[A-Za-z0-9_-]{16}\\.[A-Za-z0-9_-]{22}\\.[A-Za-z0-9_-]+$'`,
+    ),
+    index('gmail_integration_workspace_status_idx').on(table.workspaceId, table.status),
+  ],
+);
+
+export const gmailIntegrationAuditEvent = commitmentosSchema.table(
+  'gmail_integration_audit_event',
+  {
+    id: text('id').primaryKey(),
+    workspaceId: text('workspace_id').notNull(),
+    integrationId: text('integration_id').notNull(),
+    actorUserId: text('actor_user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'restrict' }),
+    eventType: gmailIntegrationAuditEventType('event_type').notNull(),
+    details: jsonb('details').$type<Record<string, unknown>>().default({}).notNull(),
+    occurredAt: timestamp('occurred_at', { withTimezone: true, mode: 'date' })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    foreignKey({
+      name: 'gmail_integration_audit_event_workspace_integration_fk',
+      columns: [table.workspaceId, table.integrationId],
+      foreignColumns: [gmailIntegration.workspaceId, gmailIntegration.id],
+    }).onDelete('restrict'),
+    check('gmail_integration_audit_event_details_object', sql`jsonb_typeof("details") = 'object'`),
+    index('gmail_integration_audit_event_workspace_occurred_idx').on(
+      table.workspaceId,
+      table.occurredAt,
+    ),
+    index('gmail_integration_audit_event_integration_occurred_idx').on(
+      table.integrationId,
+      table.occurredAt,
+    ),
+  ],
+);
+
+export const gmailOAuthState = commitmentosSchema.table(
+  'gmail_oauth_state',
+  {
+    id: text('id').primaryKey(),
+    workspaceId: text('workspace_id')
+      .notNull()
+      .references(() => workspace.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    stateHash: text('state_hash').notNull().unique(),
+    browserTokenHash: text('browser_token_hash').notNull(),
+    oidcNonceHash: text('oidc_nonce_hash').notNull(),
+    codeVerifierCiphertext: text('code_verifier_ciphertext').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true, mode: 'date' }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).defaultNow().notNull(),
+  },
+  (table) => [
+    unique('gmail_oauth_state_workspace_user_unique').on(table.workspaceId, table.userId),
+    check('gmail_oauth_state_hash_format', sql`"state_hash" ~ '^[a-f0-9]{64}$'`),
+    check('gmail_oauth_state_browser_hash_format', sql`"browser_token_hash" ~ '^[a-f0-9]{64}$'`),
+    check('gmail_oauth_state_oidc_nonce_hash_format', sql`"oidc_nonce_hash" ~ '^[a-f0-9]{64}$'`),
+    check(
+      'gmail_oauth_state_verifier_ciphertext_format',
+      sql`"code_verifier_ciphertext" ~ '^v1\\.[A-Za-z0-9_-]{16}\\.[A-Za-z0-9_-]{22}\\.[A-Za-z0-9_-]+$'`,
+    ),
+    index('gmail_oauth_state_expiry_idx').on(table.expiresAt),
   ],
 );
 

@@ -93,5 +93,8 @@ jobs:
       - name: PostgreSQL source-message integration tests
         run: npm run test:source-messages-integration
 
+      - name: PostgreSQL Gmail OAuth-state integration tests
+        run: npm run test:gmail-integration
+
       - name: PostgreSQL and Redis/BullMQ job integration tests
         run: npm run test:jobs-integration

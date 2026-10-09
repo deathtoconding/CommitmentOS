@@ -45,6 +45,8 @@ const pool = new Pool({
 });
 let server;
 let smtpServer;
+let verificationFailureTriggerName;
+let verificationFailureFunctionName;
 let serverOutput = '';
 
 function appendServerOutput(chunk) {
@@ -229,6 +231,10 @@ function startServer() {
         ...process.env,
         BETTER_AUTH_URL: baseURL,
         EMAIL_FROM: emailFrom,
+        GMAIL_OAUTH_ENABLED: 'false',
+        GMAIL_CLIENT_ID: '',
+        GMAIL_CLIENT_SECRET: '',
+        INTEGRATION_ENCRYPTION_KEY: '',
         NODE_ENV: 'production',
         PORT: String(port),
         SMTP_HOST: '127.0.0.1',
@@ -1076,6 +1082,47 @@ try {
   workspaceIds.push(firstWorkspace.id);
   assert.equal(firstWorkspace.name, 'Product Team', 'Workspace names should be trimmed.');
   assert.equal(firstWorkspace.role, 'OWNER', 'Workspace creators must become owners.');
+
+  const anonymousGmailIntegrations = await workspaceRequest(
+    `/api/workspaces/${firstWorkspace.id}/integrations/gmail`,
+  );
+  assert.equal(anonymousGmailIntegrations.status, 401);
+  const ownerGmailIntegrations = await workspaceRequest(
+    `/api/workspaces/${firstWorkspace.id}/integrations/gmail`,
+    { cookie },
+  );
+  assert.equal(ownerGmailIntegrations.status, 200);
+  assert.deepEqual(await ownerGmailIntegrations.json(), { integrations: [] });
+  const disabledGmailConnect = await workspaceRequest(
+    `/api/workspaces/${firstWorkspace.id}/integrations/gmail/connect`,
+    { cookie },
+  );
+  assert.equal(
+    disabledGmailConnect.status,
+    503,
+    'Gmail OAuth must fail closed when provider credentials are not configured.',
+  );
+  const invalidGmailCallback = await fetch(`${baseURL}/api/integrations/gmail/callback`, {
+    redirect: 'manual',
+  });
+  assert.equal(invalidGmailCallback.status, 303);
+  const invalidGmailCallbackLocation = new URL(
+    invalidGmailCallback.headers.get('location') ?? '',
+    baseURL,
+  );
+  assert.equal(invalidGmailCallbackLocation.pathname, '/app/integrations');
+  assert.equal(invalidGmailCallbackLocation.searchParams.get('gmail'), 'error');
+  assert.match(invalidGmailCallback.headers.get('set-cookie') ?? '', /max-age=0/i);
+  const crossSiteGmailDisconnect = await fetch(
+    `${baseURL}/api/workspaces/${firstWorkspace.id}/integrations/gmail/${randomUUID()}/disconnect`,
+    {
+      method: 'POST',
+      headers: { cookie, origin: 'https://attacker.example' },
+      redirect: 'manual',
+    },
+  );
+  assert.equal(crossSiteGmailDisconnect.status, 403);
+
   const workspaceCreatedEvents = await pool.query(
     `SELECT id, actor_user_id, target_user_id, event_type, details
      FROM commitmentos.workspace_audit_event
@@ -1223,7 +1270,7 @@ try {
     ['/app', 'Your overview is ready'],
     ['/app/inbox', 'No commitments yet.'],
     ['/app/commitments', 'No commitments to show yet'],
-    ['/app/integrations', 'No integrations are configured here'],
+    ['/app/integrations', 'No Gmail account is connected'],
     ['/app/settings', 'Your signed-in profile'],
   ];
   for (const [path, expectedContent] of appSectionCases) {
@@ -1300,7 +1347,81 @@ try {
   );
   assert.equal(secondAccountStillUnverified.rows[0]?.email_verified, false);
 
-  await followVerificationLink(secondEmail, { concurrent: true });
+  const verificationLinkToRetry = await verificationLinkFor(secondEmail);
+  const verificationFailureSuffix = randomUUID().replaceAll('-', '');
+  verificationFailureTriggerName = `fail_email_verification_${verificationFailureSuffix}`;
+  verificationFailureFunctionName = `fail_email_verification_fn_${verificationFailureSuffix}`;
+  await pool.query(`
+    CREATE FUNCTION commitmentos."${verificationFailureFunctionName}"()
+    RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+    BEGIN
+      RAISE EXCEPTION 'forced email verification update failure' USING ERRCODE = 'P0001';
+    END;
+    $$
+  `);
+  await pool.query(`
+    CREATE TRIGGER "${verificationFailureTriggerName}"
+    BEFORE UPDATE OF email_verified ON commitmentos."user"
+    FOR EACH ROW
+    WHEN (OLD.id = '${secondRegistrationResult.user.id}' AND NEW.email_verified IS TRUE)
+    EXECUTE FUNCTION commitmentos."${verificationFailureFunctionName}"()
+  `);
+
+  const verificationTokenToRetry = new URL(verificationLinkToRetry).searchParams.get('token');
+  assert.ok(verificationTokenToRetry);
+  const failedVerificationAttempt = await fetch(verificationLinkToRetry, { redirect: 'manual' });
+  const failedVerificationCallback = failedVerificationAttempt.headers.get('location');
+  const callbackError = failedVerificationCallback
+    ? new URL(failedVerificationCallback, baseURL).searchParams.get('error')
+    : null;
+  assert.ok(
+    failedVerificationAttempt.status >= 400 || callbackError,
+    'A database failure while updating verification must not be reported as success.',
+  );
+  const markerAfterFailedVerification = await pool.query(
+    `SELECT use_status
+     FROM commitmentos.email_verification_token_use
+     WHERE token_hash = $1`,
+    [createHash('sha256').update(verificationTokenToRetry).digest('hex')],
+  );
+  assert.equal(
+    markerAfterFailedVerification.rows.length,
+    0,
+    'A failed account update must release its one-time-token reservation for retry.',
+  );
+  const accountAfterFailedVerification = await pool.query(
+    'SELECT email_verified FROM commitmentos."user" WHERE id = $1',
+    [secondRegistrationResult.user.id],
+  );
+  assert.equal(accountAfterFailedVerification.rows[0]?.email_verified, false);
+
+  await pool.query(`DROP TRIGGER "${verificationFailureTriggerName}" ON commitmentos."user"`);
+  await pool.query(`DROP FUNCTION commitmentos."${verificationFailureFunctionName}"()`);
+  verificationFailureTriggerName = undefined;
+  verificationFailureFunctionName = undefined;
+
+  const expiredReservationId = randomUUID();
+  await pool.query(
+    `INSERT INTO commitmentos.email_verification_token_use
+       (token_hash, expires_at, consumed_at, use_status, reservation_id, reservation_expires_at)
+     VALUES ($1, now() + interval '1 hour', NULL, 'RESERVED', $2, now() - interval '1 second')`,
+    [createHash('sha256').update(verificationTokenToRetry).digest('hex'), expiredReservationId],
+  );
+
+  const successfulSecondVerification = await followVerificationLink(secondEmail, {
+    concurrent: true,
+  });
+  const consumedVerificationMarker = await pool.query(
+    `SELECT use_status, consumed_at, reservation_expires_at
+     FROM commitmentos.email_verification_token_use
+     WHERE token_hash = $1`,
+    [createHash('sha256').update(successfulSecondVerification.token).digest('hex')],
+  );
+  assert.equal(consumedVerificationMarker.rows[0]?.use_status, 'CONSUMED');
+  assert.ok(consumedVerificationMarker.rows[0]?.consumed_at instanceof Date);
+  assert.equal(consumedVerificationMarker.rows[0]?.reservation_expires_at, null);
   const secondVerifiedAccount = await pool.query(
     'SELECT email_verified FROM commitmentos."user" WHERE id = $1',
     [secondRegistrationResult.user.id],
@@ -1310,6 +1431,16 @@ try {
   const secondLogin = await authRequest('sign-in/email', { email: secondEmail, password });
   assert.ok(secondLogin.ok, 'The verified second user should be able to sign in.');
   const secondCookie = readCookieHeader(secondLogin);
+  const secondUserCannotReadGmailIntegration = await workspaceRequest(
+    `/api/workspaces/${firstWorkspace.id}/integrations/gmail`,
+    { cookie: secondCookie },
+  );
+  assert.equal(secondUserCannotReadGmailIntegration.status, 404);
+  const secondUserCannotStartGmailConnection = await workspaceRequest(
+    `/api/workspaces/${firstWorkspace.id}/integrations/gmail/connect`,
+    { cookie: secondCookie },
+  );
+  assert.equal(secondUserCannotStartGmailConnection.status, 404);
 
   const secondUserCannotSelectFirstWorkspace = await appPageRequest(
     `/app?workspaceId=${firstWorkspace.id}`,
@@ -1685,6 +1816,22 @@ try {
       details: { role: 'MEMBER' },
     },
   ]);
+  const memberGmailIntegrations = await workspaceRequest(
+    `/api/workspaces/${firstWorkspace.id}/integrations/gmail`,
+    { cookie: secondCookie },
+  );
+  assert.equal(memberGmailIntegrations.status, 200);
+  assert.deepEqual(await memberGmailIntegrations.json(), { integrations: [] });
+  const memberCannotStartGmailConnection = await workspaceRequest(
+    `/api/workspaces/${firstWorkspace.id}/integrations/gmail/connect`,
+    { cookie: secondCookie },
+  );
+  assert.equal(memberCannotStartGmailConnection.status, 403);
+  const memberCannotDisconnectGmail = await workspaceRequest(
+    `/api/workspaces/${firstWorkspace.id}/integrations/gmail/${randomUUID()}/disconnect`,
+    { method: 'POST', cookie: secondCookie },
+  );
+  assert.equal(memberCannotDisconnectGmail.status, 403);
 
   const newlyAddedMemberWorkspacePage = await appPageRequest(
     `/app/settings?workspaceId=${firstWorkspace.id}`,
@@ -2418,6 +2565,24 @@ try {
 } finally {
   await cleanupServer();
   await cleanupEmailServer();
+  if (verificationFailureTriggerName) {
+    try {
+      await pool.query(
+        `DROP TRIGGER IF EXISTS "${verificationFailureTriggerName}" ON commitmentos."user"`,
+      );
+    } catch {
+      process.exitCode = 1;
+    }
+  }
+  if (verificationFailureFunctionName) {
+    try {
+      await pool.query(
+        `DROP FUNCTION IF EXISTS commitmentos."${verificationFailureFunctionName}"()`,
+      );
+    } catch {
+      process.exitCode = 1;
+    }
+  }
   const cleanupClient = await pool.connect();
   try {
     await cleanupClient.query('BEGIN');

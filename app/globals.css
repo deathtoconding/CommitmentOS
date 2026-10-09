@@ -1366,6 +1366,213 @@ a:focus-visible {
   font-weight: 750;
 }
 
+.gmail-integration-panel {
+  display: grid;
+  gap: 1rem;
+}
+
+.gmail-integration-card {
+  padding: 1.35rem;
+  border: 1px solid #e2eae5;
+  border-radius: 1rem;
+  background: linear-gradient(135deg, #fff, #fbfdfb);
+  box-shadow: 0 8px 24px rgb(45 74 54 / 4%);
+}
+
+.gmail-integration-card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+}
+
+.gmail-provider-mark {
+  display: grid;
+  width: 2.65rem;
+  height: 2.65rem;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid #e2eae5;
+  border-radius: 0.85rem;
+  background: #fff;
+  color: #4e795c;
+  font-size: 1.15rem;
+  font-weight: 800;
+}
+
+.gmail-integration-eyebrow {
+  margin: 0 0 0.2rem;
+  color: #829188;
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
+.gmail-integration-card-header h2 {
+  margin: 0;
+  color: #2b4035;
+  font-size: 1rem;
+}
+
+.gmail-integration-primary,
+.gmail-integration-secondary {
+  display: inline-flex;
+  min-height: 2.35rem;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  padding: 0.55rem 0.85rem;
+  border: 1px solid #d5e4d9;
+  border-radius: 0.72rem;
+  background: #edf5ef;
+  color: #41684e;
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 750;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.gmail-integration-primary {
+  margin-left: auto;
+  border-color: #366d4a;
+  background: #366d4a;
+  color: #fff;
+}
+
+.gmail-integration-primary:hover,
+.gmail-integration-secondary:hover {
+  filter: brightness(0.96);
+}
+
+.gmail-integration-primary:focus-visible,
+.gmail-integration-secondary:focus-visible {
+  outline: 3px solid #a8cfb2;
+  outline-offset: 3px;
+}
+
+.gmail-integration-disabled-action {
+  display: inline-flex;
+  min-height: 2.35rem;
+  align-items: center;
+  margin-left: auto;
+  padding: 0.55rem 0.85rem;
+  border: 1px solid #e1e8e3;
+  border-radius: 0.72rem;
+  background: #f7f9f7;
+  color: #88948d;
+  font-size: 0.73rem;
+  font-weight: 700;
+}
+
+.gmail-integration-explanation {
+  max-width: 54rem;
+  margin: 1.1rem 0 0;
+  color: #718278;
+  font-size: 0.79rem;
+  line-height: 1.65;
+}
+
+.gmail-integration-configuration,
+.gmail-integration-empty {
+  margin: 0.9rem 0 0;
+  color: #829188;
+  font-size: 0.75rem;
+  line-height: 1.55;
+}
+
+.gmail-integration-list {
+  display: grid;
+  gap: 0.75rem;
+  margin: 1.15rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.gmail-integration-account {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.25rem;
+  padding: 1rem;
+  border: 1px solid #e8eeea;
+  border-radius: 0.85rem;
+  background: #fff;
+}
+
+.gmail-integration-account-copy {
+  min-width: 0;
+}
+
+.gmail-integration-account-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.gmail-integration-account-heading h3 {
+  margin: 0;
+  color: #344b3e;
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+
+.gmail-integration-account-copy > p {
+  margin: 0.35rem 0 0;
+  color: #85938b;
+  font-size: 0.69rem;
+  line-height: 1.5;
+}
+
+.gmail-integration-account-copy > .gmail-integration-scopes {
+  color: #718b79;
+  font-weight: 650;
+}
+
+.gmail-integration-status {
+  display: inline-flex;
+  min-height: 1.55rem;
+  align-items: center;
+  padding: 0.2rem 0.55rem;
+  border: 1px solid #dce9df;
+  border-radius: 999px;
+  background: #f1f7f2;
+  color: #54745f;
+  font-size: 0.61rem;
+  font-weight: 750;
+}
+
+.gmail-integration-status-revocation_pending,
+.gmail-integration-status-reauth_required {
+  border-color: #eadfc9;
+  background: #faf5e9;
+  color: #88704a;
+}
+
+.gmail-integration-status-disconnected {
+  border-color: #e4e8e5;
+  background: #f6f7f6;
+  color: #7c8981;
+}
+
+.gmail-integration-notice {
+  margin: 0;
+  padding: 0.8rem 0.95rem;
+  border: 1px solid #dce9df;
+  border-radius: 0.8rem;
+  background: #f1f7f2;
+  color: #476c52;
+  font-size: 0.77rem;
+  line-height: 1.5;
+}
+
+.gmail-integration-notice-alert {
+  border-color: #eadfc9;
+  background: #faf5e9;
+  color: #806744;
+}
+
 .settings-panels {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1781,6 +1988,19 @@ a:focus-visible {
 
   .settings-panels {
     grid-template-columns: 1fr;
+  }
+
+  .gmail-integration-card {
+    padding: 1rem;
+  }
+
+  .gmail-integration-card-header {
+    flex-wrap: wrap;
+  }
+
+  .gmail-integration-account {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .app-page-footer {
