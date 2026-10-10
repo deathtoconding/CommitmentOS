@@ -47,6 +47,8 @@ let server;
 let smtpServer;
 let verificationFailureTriggerName;
 let verificationFailureFunctionName;
+let verificationFinalizationFailureTriggerName;
+let verificationFinalizationFailureFunctionName;
 let serverOutput = '';
 
 function appendServerOutput(chunk) {
@@ -551,7 +553,84 @@ async function testPasswordRecovery() {
   assert.ok(recoveryRegistration.ok, 'A password recovery fixture account should register.');
   const recoveryUser = (await recoveryRegistration.json()).user;
   assert.equal(recoveryUser.emailVerified, false);
-  await followVerificationLink(recoveryEmail);
+  const recoveryVerificationLink = await verificationLinkFor(recoveryEmail);
+  const recoveryVerificationToken = new URL(recoveryVerificationLink).searchParams.get('token');
+  assert.ok(recoveryVerificationToken);
+  const recoveryVerificationHash = createHash('sha256')
+    .update(recoveryVerificationToken)
+    .digest('hex');
+  verificationTokenHashes.push(recoveryVerificationHash);
+
+  const finalizationFailureSuffix = randomUUID().replaceAll('-', '');
+  verificationFinalizationFailureTriggerName = `fail_verification_finalize_${finalizationFailureSuffix}`;
+  verificationFinalizationFailureFunctionName = `fail_verification_finalize_fn_${finalizationFailureSuffix}`;
+  await pool.query(`
+    CREATE FUNCTION commitmentos."${verificationFinalizationFailureFunctionName}"()
+    RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+    BEGIN
+      RAISE EXCEPTION 'forced verification-token finalization failure' USING ERRCODE = 'P0001';
+    END;
+    $$
+  `);
+  await pool.query(`
+    CREATE TRIGGER "${verificationFinalizationFailureTriggerName}"
+    BEFORE UPDATE OF use_status ON commitmentos.email_verification_token_use
+    FOR EACH ROW
+    WHEN (OLD.token_hash = '${recoveryVerificationHash}' AND NEW.use_status = 'CONSUMED')
+    EXECUTE FUNCTION commitmentos."${verificationFinalizationFailureFunctionName}"()
+  `);
+
+  const failedTokenFinalization = await fetch(recoveryVerificationLink, { redirect: 'manual' });
+  const failedFinalizationLocation = failedTokenFinalization.headers.get('location');
+  const failedFinalizationError = failedFinalizationLocation
+    ? new URL(failedFinalizationLocation, baseURL).searchParams.get('error')
+    : null;
+  assert.ok(
+    failedTokenFinalization.status >= 400 || failedFinalizationError,
+    'A failure to finalize the replay marker must not be reported as a successful callback.',
+  );
+  const verifiedBeforeMarkerRecovery = await pool.query(
+    'SELECT email_verified FROM commitmentos."user" WHERE id = $1',
+    [recoveryUser.id],
+  );
+  assert.equal(
+    verifiedBeforeMarkerRecovery.rows[0]?.email_verified,
+    true,
+    'The failure is injected after the account verification update has committed.',
+  );
+  const failedFinalizationMarker = await pool.query(
+    `SELECT use_status FROM commitmentos.email_verification_token_use WHERE token_hash = $1`,
+    [recoveryVerificationHash],
+  );
+  assert.equal(
+    failedFinalizationMarker.rows.length,
+    0,
+    'A failed finalization must release its temporary claim so a retry can recover.',
+  );
+
+  await pool.query(
+    `DROP TRIGGER "${verificationFinalizationFailureTriggerName}" ON commitmentos.email_verification_token_use`,
+  );
+  await pool.query(`DROP FUNCTION commitmentos."${verificationFinalizationFailureFunctionName}"()`);
+  verificationFinalizationFailureTriggerName = undefined;
+  verificationFinalizationFailureFunctionName = undefined;
+
+  const finalizedOnRetry = await fetch(recoveryVerificationLink, { redirect: 'manual' });
+  assert.equal(finalizedOnRetry.status, 302);
+  const finalizedRetryLocation = new URL(finalizedOnRetry.headers.get('location') ?? '', baseURL);
+  assert.equal(finalizedRetryLocation.pathname, '/login');
+  assert.equal(finalizedRetryLocation.searchParams.get('verified'), '1');
+  assert.equal(finalizedRetryLocation.searchParams.has('error'), false);
+  const consumedAfterRetry = await pool.query(
+    `SELECT use_status, consumed_at, reservation_expires_at
+     FROM commitmentos.email_verification_token_use WHERE token_hash = $1`,
+    [recoveryVerificationHash],
+  );
+  assert.equal(consumedAfterRetry.rows[0]?.use_status, 'CONSUMED');
+  assert.ok(consumedAfterRetry.rows[0]?.consumed_at instanceof Date);
+  assert.equal(consumedAfterRetry.rows[0]?.reservation_expires_at, null);
 
   const recoveryLogin = await authRequest('sign-in/email', { email: recoveryEmail, password });
   assert.ok(recoveryLogin.ok, 'The verified recovery fixture should be able to sign in.');
@@ -2578,6 +2657,24 @@ try {
     try {
       await pool.query(
         `DROP FUNCTION IF EXISTS commitmentos."${verificationFailureFunctionName}"()`,
+      );
+    } catch {
+      process.exitCode = 1;
+    }
+  }
+  if (verificationFinalizationFailureTriggerName) {
+    try {
+      await pool.query(
+        `DROP TRIGGER IF EXISTS "${verificationFinalizationFailureTriggerName}" ON commitmentos.email_verification_token_use`,
+      );
+    } catch {
+      process.exitCode = 1;
+    }
+  }
+  if (verificationFinalizationFailureFunctionName) {
+    try {
+      await pool.query(
+        `DROP FUNCTION IF EXISTS commitmentos."${verificationFinalizationFailureFunctionName}"()`,
       );
     } catch {
       process.exitCode = 1;
