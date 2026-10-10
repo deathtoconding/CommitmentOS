@@ -72,7 +72,7 @@ describe('background job contracts', () => {
     });
   });
 
-  it('redacts unsafe provider error codes and bounds exponential retry delay', () => {
+  it('redacts unsafe provider error codes and bounds equal-jitter exponential retry delay', () => {
     expect(safeJobErrorCode('api-token-secret')).toBe('UNKNOWN_ERROR');
     expect(safeJobErrorCode('JWTSECRET1234')).toBe('UNKNOWN_ERROR');
     expect(classifyJobFailure({ code: 'HTTP_429' })).toMatchObject({
@@ -85,8 +85,12 @@ describe('background job contracts', () => {
       errorCode: '08006',
       retryable: true,
     });
-    expect(computeRetryDelay(1, 1_000)).toBe(1_000);
-    expect(computeRetryDelay(3, 1_000)).toBe(4_000);
-    expect(computeRetryDelay(12, 10_000)).toBe(60_000);
+    expect(computeRetryDelay(1, 1_000, () => 0)).toBe(500);
+    expect(computeRetryDelay(1, 1_000, () => 0.5)).toBe(750);
+    expect(computeRetryDelay(1, 1_000, () => 1)).toBe(1_000);
+    expect(computeRetryDelay(3, 1_000, () => 0)).toBe(2_000);
+    expect(computeRetryDelay(3, 1_000, () => 1)).toBe(4_000);
+    expect(computeRetryDelay(12, 10_000, () => 1)).toBe(60_000);
+    expect(computeRetryDelay(12, 10_000, () => Number.NaN)).toBe(45_000);
   });
 });

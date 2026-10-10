@@ -8,7 +8,7 @@ The Redis queue is transport and scheduling, not the product record. Redis messa
 
 ## Worker guarantees
 
-- `JOB_MAX_ATTEMPTS` bounds retries. Transient, rate-limit, and timeout failures use exponential backoff (with an explicit, bounded provider retry delay when available); authentication, permanent, and unknown failures do not retry.
+- `JOB_MAX_ATTEMPTS` bounds retries. Transient, rate-limit, and timeout failures use capped equal-jitter exponential backoff; the same sampled delay is persisted in PostgreSQL and handed to BullMQ so queue retries cannot race ahead of the durable schedule. A valid provider retry delay is respected up to the 24-hour safety cap. Authentication, permanent, and unknown failures do not retry.
 - Each job receives an `AbortSignal` and a database-enforced timeout/lease. Processors performing network I/O must pass the signal through and must not continue consequential work after abort.
 - Permanent/exhausted jobs are persisted as `DEAD_LETTER` with a sanitized failure class/code and are also recorded in the BullMQ dead-letter queue. Raw provider error messages, credentials, and message bodies are not stored in job failure columns or worker logs.
 - Structured worker logs carry job ID and correlation ID, never payloads. A Postgres heartbeat records worker readiness. `/api/health/live` reports process liveness; `/api/health/ready` reports PostgreSQL, Redis, and worker-heartbeat readiness and returns `503` if any dependency is unavailable.
@@ -18,7 +18,7 @@ The Redis queue is transport and scheduling, not the product record. Redis messa
 
 Set `REDIS_URL` to a private Redis service; use `rediss://` and provider-managed authentication/TLS in shared environments. `JOBS_QUEUE_NAME`, `JOBS_QUEUE_PREFIX`, and the `JOB_*` settings tune concurrency, retries, timeouts, heartbeat, and recovery cadence. Run `npm run worker` as a separate process after applying database migrations. The web application can start without a worker, but readiness intentionally remains `503` until Redis and a fresh worker heartbeat are available.
 
-The CI integration suite provisions real PostgreSQL and Redis services. It exercises idempotent concurrent enqueue, recovery from a durable pending outbox row, actual BullMQ processing, correlation, retry/backoff, timeout cancellation, failure classification, dead-letter persistence, and readiness. Local runs require both services; tests fail rather than silently skipping when either dependency is absent.
+The CI integration suite provisions real PostgreSQL and Redis services. It exercises idempotent concurrent enqueue, duplicate message delivery, replacement of failed Redis deliveries from the PostgreSQL outbox, actual BullMQ processing, correlation, jittered retry timing, rate-limit hints, transient retry exhaustion, timeout cancellation, permanent dead-letter persistence, worker restart after an expired-lease reclaim, redacted structured logs, and readiness transitions. Local runs require both services; tests fail rather than silently skipping when either dependency is absent.
 
 The initial `PLATFORM_PROBE` handler is an infrastructure operation that confirms a workspace row is readable. Provider sync, extraction, deadline, and communication jobs are added with their respective product workflows; this foundation does not claim those handlers exist.
 

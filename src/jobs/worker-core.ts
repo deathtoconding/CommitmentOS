@@ -1,6 +1,13 @@
 import { UnrecoverableError, Worker, type Job } from 'bullmq';
 import type { Pool } from 'pg';
-import { computeRetryDelay, classifyJobFailure, PermanentJobError, type JobKind } from './model';
+import {
+  JOB_BACKOFF_TYPE,
+  MAX_PROVIDER_RETRY_DELAY_MS,
+  computeRetryDelay,
+  classifyJobFailure,
+  PermanentJobError,
+  type JobKind,
+} from './model';
 import { createJobQueueClient, dispatchRecoverableJobs, type StoredJob } from './queue';
 import { getJobsEnvironment, type JobsEnvironment } from './environment';
 
@@ -141,12 +148,14 @@ async function executeJob(
   } catch (error) {
     const failure = classifyJobFailure(error);
     const retryable = failure.retryable && row.attempt_count < row.max_attempts;
-    const retryDelayMs = Math.max(
-      0,
-      Math.min(
-        24 * 60 * 60 * 1_000,
-        failure.retryAfterMs ?? computeRetryDelay(row.attempt_count, environment.backoffMs),
-      ),
+    const exponentialDelayMs = computeRetryDelay(row.attempt_count, environment.backoffMs);
+    const providerRetryDelayMs =
+      typeof failure.retryAfterMs === 'number' && Number.isFinite(failure.retryAfterMs)
+        ? Math.max(0, Math.min(MAX_PROVIDER_RETRY_DELAY_MS, Math.floor(failure.retryAfterMs)))
+        : 0;
+    const retryDelayMs = Math.min(
+      MAX_PROVIDER_RETRY_DELAY_MS,
+      Math.max(exponentialDelayMs, providerRetryDelayMs),
     );
     await pool.query(
       `UPDATE commitmentos.async_job
@@ -198,7 +207,7 @@ async function executeJob(
       new Error(failure.errorCode, {
         cause: { failureClass: failure.failureClass, errorCode: failure.errorCode },
       }),
-      { code: failure.errorCode },
+      { code: failure.errorCode, retryAfterMs: retryDelayMs },
     );
   } finally {
     if (timeout) clearTimeout(timeout);
@@ -251,6 +260,19 @@ export async function startJobWorker(options: {
       lockDuration: environment.timeoutMs + 30_000,
       stalledInterval: 30_000,
       maxStalledCount: 1,
+      settings: {
+        backoffStrategy: (attemptsMade, type, error) => {
+          if (type !== JOB_BACKOFF_TYPE) return -1;
+          const requestedDelay =
+            error && 'retryAfterMs' in error
+              ? (error as Error & { retryAfterMs?: unknown }).retryAfterMs
+              : undefined;
+          if (typeof requestedDelay === 'number' && Number.isFinite(requestedDelay)) {
+            return Math.max(0, Math.min(MAX_PROVIDER_RETRY_DELAY_MS, Math.floor(requestedDelay)));
+          }
+          return computeRetryDelay(attemptsMade, environment.backoffMs);
+        },
+      },
     },
   );
 

@@ -14,6 +14,9 @@ export const JOB_STATUSES = [
 ] as const;
 export type JobStatus = (typeof JOB_STATUSES)[number];
 
+export const JOB_BACKOFF_TYPE = 'commitmentos-jittered-exponential';
+export const MAX_JOB_RETRY_DELAY_MS = 60_000;
+export const MAX_PROVIDER_RETRY_DELAY_MS = 24 * 60 * 60 * 1_000;
 export const JOB_FAILURE_CLASSES = [
   'TRANSIENT',
   'RATE_LIMITED',
@@ -192,7 +195,28 @@ export function safeJobErrorCode(value: string): string {
   return 'UNKNOWN_ERROR';
 }
 
-export function computeRetryDelay(attempt: number, baseDelayMs: number): number {
-  const boundedAttempt = Math.max(1, Math.min(16, Math.floor(attempt)));
-  return Math.min(60_000, baseDelayMs * 2 ** (boundedAttempt - 1));
+export function computeRetryDelay(
+  attempt: number,
+  baseDelayMs: number,
+  random: () => number = Math.random,
+): number {
+  const boundedAttempt = Number.isFinite(attempt)
+    ? Math.max(1, Math.min(16, Math.floor(attempt)))
+    : 1;
+  const boundedBaseDelay = Number.isFinite(baseDelayMs)
+    ? Math.max(0, Math.min(MAX_JOB_RETRY_DELAY_MS, Math.floor(baseDelayMs)))
+    : 0;
+  const maximumDelay = Math.min(
+    MAX_JOB_RETRY_DELAY_MS,
+    boundedBaseDelay * 2 ** (boundedAttempt - 1),
+  );
+  if (maximumDelay === 0) return 0;
+
+  const minimumDelay = Math.floor(maximumDelay / 2);
+  const sample = random();
+  const boundedSample = Number.isFinite(sample) ? Math.max(0, Math.min(1, sample)) : 0.5;
+  return Math.min(
+    maximumDelay,
+    minimumDelay + Math.floor((maximumDelay - minimumDelay) * boundedSample),
+  );
 }

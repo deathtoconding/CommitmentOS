@@ -4,7 +4,13 @@ import Redis from 'ioredis';
 import { Pool, type QueryResultRow } from 'pg';
 import { randomUUID } from 'node:crypto';
 import { getJobsEnvironment, type JobsEnvironment } from './environment';
-import { parseJobRequest, safeJobErrorCode, type JobKind, type JobRequest } from './model';
+import {
+  JOB_BACKOFF_TYPE,
+  parseJobRequest,
+  safeJobErrorCode,
+  type JobKind,
+  type JobRequest,
+} from './model';
 
 export type StoredJob = QueryResultRow & {
   id: string;
@@ -77,6 +83,28 @@ export function createJobQueueClient(environment: JobsEnvironment = getJobsEnvir
   return { connection, queue, deadLetterQueue };
 }
 
+async function ensureQueueJob(queue: Queue, row: StoredJob, environment: JobsEnvironment) {
+  const existing = await queue.getJob(row.id);
+  if (existing) {
+    const state = await existing.getState();
+    if (state === 'completed' || state === 'failed') {
+      await existing.remove();
+    } else {
+      return;
+    }
+  }
+
+  await queue.add(
+    'process',
+    { jobId: row.id, correlationId: row.correlation_id },
+    {
+      jobId: row.id,
+      attempts: row.max_attempts,
+      backoff: { type: JOB_BACKOFF_TYPE, delay: environment.backoffMs },
+    },
+  );
+}
+
 export async function enqueueJob(
   pool: Pool,
   queue: Queue,
@@ -133,15 +161,7 @@ export async function enqueueJob(
 
   if (['PENDING', 'QUEUED', 'RETRYING'].includes(row.status)) {
     try {
-      await queue.add(
-        'process',
-        { jobId: row.id, correlationId: row.correlation_id },
-        {
-          jobId: row.id,
-          attempts: row.max_attempts,
-          backoff: { type: 'exponential', delay: environment.backoffMs },
-        },
-      );
+      await ensureQueueJob(queue, row, environment);
     } catch {
       throw new JobQueueUnavailableError();
     }
@@ -218,15 +238,7 @@ export async function dispatchRecoverableJobs(
   );
   let dispatched = 0;
   for (const row of candidates.rows) {
-    await queue.add(
-      'process',
-      { jobId: row.id, correlationId: row.correlation_id },
-      {
-        jobId: row.id,
-        attempts: row.max_attempts,
-        backoff: { type: 'exponential', delay: environment.backoffMs },
-      },
-    );
+    await ensureQueueJob(queue, row, environment);
     await pool.query(
       `UPDATE commitmentos.async_job
        SET status = CASE WHEN status = 'PENDING' THEN 'QUEUED'::commitmentos.async_job_status ELSE status END,
