@@ -21,6 +21,7 @@
     "test:jobs-integration": "tsx scripts/test-jobs-integration.ts",
     "test:source-messages-integration": "node --conditions=react-server --import tsx scripts/test-source-messages-integration.ts",
     "test:gmail-integration": "node --conditions=react-server --import tsx scripts/test-gmail-integration.ts",
+    "test:extraction-evaluation": "tsx scripts/evaluate-extraction.ts",
     "worker": "tsx src/jobs/worker.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
