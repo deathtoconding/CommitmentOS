@@ -193,6 +193,16 @@ async function testIdempotentTenantScopedPersistence(): Promise<void> {
   assert.equal(concurrentFirst.sourceMessage.providerTimestamp, null);
   assert.equal(concurrentFirst.sourceMessage.legacyReference, null);
 
+  const sameExternalIdentityInOtherWorkspace = await recordSourceMessage(
+    otherWorkspaceId,
+    identity,
+  );
+  assert.notEqual(
+    sameExternalIdentityInOtherWorkspace.sourceMessage.id,
+    concurrentFirst.sourceMessage.id,
+    'The same external identifiers in another workspace must remain a separate tenant record.',
+  );
+
   const timestamp = '2026-10-08T12:30:00.000Z';
   const timestampEnrichment = await recordSourceMessage(workspaceId, {
     ...identity,
@@ -201,6 +211,19 @@ async function testIdempotentTenantScopedPersistence(): Promise<void> {
   assert.equal(timestampEnrichment.status, 'existing');
   assert.equal(timestampEnrichment.sourceMessage.id, concurrentFirst.sourceMessage.id);
   assert.equal(timestampEnrichment.sourceMessage.providerTimestamp?.toISOString(), timestamp);
+  const otherWorkspaceIdentityAfterEnrichment = await recordSourceMessage(
+    otherWorkspaceId,
+    identity,
+  );
+  assert.equal(
+    otherWorkspaceIdentityAfterEnrichment.sourceMessage.id,
+    sameExternalIdentityInOtherWorkspace.sourceMessage.id,
+  );
+  assert.equal(
+    otherWorkspaceIdentityAfterEnrichment.sourceMessage.providerTimestamp,
+    null,
+    'Metadata enrichment in one tenant must not modify another tenant record.',
+  );
 
   const replay = await recordSourceMessage(workspaceId, {
     ...identity,
@@ -225,15 +248,6 @@ async function testIdempotentTenantScopedPersistence(): Promise<void> {
     alternateProviderAccount.sourceMessage.id,
     concurrentFirst.sourceMessage.id,
     'The provider account is part of the deduplication identity.',
-  );
-  const sameExternalIdentityInOtherWorkspace = await recordSourceMessage(
-    otherWorkspaceId,
-    identity,
-  );
-  assert.notEqual(
-    sameExternalIdentityInOtherWorkspace.sourceMessage.id,
-    concurrentFirst.sourceMessage.id,
-    'The same external identifiers in another workspace must remain a separate tenant record.',
   );
   const caseDistinctIdentity = await recordSourceMessage(workspaceId, {
     ...identity,

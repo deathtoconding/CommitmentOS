@@ -103,7 +103,7 @@ export function createSourceMessageRecorder<TSchema extends Record<string, unkno
         const [enriched] = await transaction
           .update(sourceMessage)
           .set({ providerTimestamp: identity.providerTimestamp })
-          .where(eq(sourceMessage.id, existing.id))
+          .where(and(eq(sourceMessage.id, existing.id), eq(sourceMessage.workspaceId, workspaceId)))
           .returning();
         if (!enriched) {
           throw new Error('The source message disappeared while applying provider metadata.');

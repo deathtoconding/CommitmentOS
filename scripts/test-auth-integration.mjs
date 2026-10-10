@@ -1683,6 +1683,49 @@ try {
   });
   assert.equal(overpostedCommitment.status, 400, 'Creation must reject server-owned fields.');
 
+  const attackerOrigin = 'https://attacker.example.test';
+  const crossOriginPreflight = await fetch(`${baseURL}${firstCommitmentsPath}`, {
+    method: 'OPTIONS',
+    headers: {
+      origin: attackerOrigin,
+      'access-control-request-method': 'POST',
+      'access-control-request-headers': 'content-type',
+    },
+  });
+  assert.equal(
+    crossOriginPreflight.headers.get('access-control-allow-origin'),
+    null,
+    'Workspace APIs must not grant an untrusted browser origin CORS access.',
+  );
+  const commitmentsBeforeCrossSiteForm = await pool.query(
+    'SELECT COUNT(*)::int AS count FROM commitmentos.commitment WHERE workspace_id = $1',
+    [firstWorkspace.id],
+  );
+  const crossSiteFormMutation = await fetch(`${baseURL}${firstCommitmentsPath}`, {
+    method: 'POST',
+    headers: {
+      cookie,
+      origin: attackerOrigin,
+      'sec-fetch-site': 'cross-site',
+      'content-type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({
+      commitmentText: 'Cross-site request forgery attempt',
+      normalizedAction: 'Create through a form post',
+    }).toString(),
+  });
+  assert.equal(crossSiteFormMutation.status, 400);
+  assert.equal(crossSiteFormMutation.headers.get('access-control-allow-origin'), null);
+  const commitmentsAfterCrossSiteForm = await pool.query(
+    'SELECT COUNT(*)::int AS count FROM commitmentos.commitment WHERE workspace_id = $1',
+    [firstWorkspace.id],
+  );
+  assert.equal(
+    commitmentsAfterCrossSiteForm.rows[0].count,
+    commitmentsBeforeCrossSiteForm.rows[0].count,
+    'A cross-site simple form request must not mutate workspace data.',
+  );
+
   const apiCommitmentCreate = await workspaceRequest(firstCommitmentsPath, {
     method: 'POST',
     cookie,
@@ -1824,6 +1867,24 @@ try {
     400,
     'Commitment owners must be workspace members.',
   );
+  const injectionOwnerAssignment = await workspaceRequest(
+    `${firstCommitmentsPath}/${apiCommitment.id}`,
+    {
+      method: 'PATCH',
+      cookie,
+      body: { ownerUserId: "' OR 1=1 --" },
+    },
+  );
+  assert.equal(
+    injectionOwnerAssignment.status,
+    400,
+    'Untrusted owner identifiers must remain query parameters and cannot bypass workspace checks.',
+  );
+  const ownerAfterInjectionAttempt = await pool.query(
+    'SELECT owner_user_id FROM commitmentos.commitment WHERE workspace_id = $1 AND id = $2',
+    [firstWorkspace.id, apiCommitment.id],
+  );
+  assert.equal(ownerAfterInjectionAttempt.rows[0]?.owner_user_id, null);
 
   const emptySecondUserList = await workspaceRequest('/api/workspaces', { cookie: secondCookie });
   assert.equal(emptySecondUserList.status, 200);
@@ -2598,6 +2659,41 @@ try {
     cookie,
   );
   await assertAppPageUnavailable(firstUserCannotSelectThirdWorkspace, ['Customer Success']);
+
+  const storedXssPayload = '<img src=x onerror=alert(1)>';
+  const storedXssCommitmentResponse = await workspaceRequest(firstCommitmentsPath, {
+    method: 'POST',
+    cookie,
+    body: {
+      commitmentText: storedXssPayload,
+      normalizedAction: 'Render untrusted text safely',
+    },
+  });
+  assert.equal(storedXssCommitmentResponse.status, 201);
+  const storedXssCommitment = (await storedXssCommitmentResponse.json()).commitment;
+  const storedXssDetailPage = await appPageRequest(
+    `/app/commitments/${storedXssCommitment.id}?workspaceId=${firstWorkspace.id}`,
+    cookie,
+  );
+  assert.equal(storedXssDetailPage.status, 200);
+  const storedXssDetailHtml = await storedXssDetailPage.text();
+  assert.ok(
+    storedXssDetailHtml.includes('&lt;img src=x onerror=alert(1)&gt;'),
+    'Untrusted commitment text must be rendered as escaped text in the detail page.',
+  );
+  assert.equal(
+    storedXssDetailHtml.includes(storedXssPayload),
+    false,
+    'Untrusted commitment text must not become an executable HTML element.',
+  );
+  const storedXssInboxPage = await appPageRequest(
+    `/app/inbox?workspaceId=${firstWorkspace.id}`,
+    cookie,
+  );
+  assert.equal(storedXssInboxPage.status, 200);
+  const storedXssInboxHtml = await storedXssInboxPage.text();
+  assert.ok(storedXssInboxHtml.includes('&lt;img src=x onerror=alert(1)&gt;'));
+  assert.equal(storedXssInboxHtml.includes(storedXssPayload), false);
 
   const logout = await authRequest('sign-out', {}, cookie);
   assert.ok(logout.ok, 'Logout should complete successfully.');
