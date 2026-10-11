@@ -1,0 +1,5 @@
+CREATE TYPE "commitmentos"."commitment_audit_actor_type" AS ENUM('USER', 'SYSTEM');--> statement-breakpoint
+ALTER TABLE "commitmentos"."commitment_audit_event" ALTER COLUMN "actor_user_id" DROP NOT NULL;--> statement-breakpoint
+ALTER TABLE "commitmentos"."commitment_audit_event" ADD COLUMN "actor_type" "commitmentos"."commitment_audit_actor_type" DEFAULT 'USER' NOT NULL;--> statement-breakpoint
+CREATE INDEX "commitment_deadline_scheduler_idx" ON "commitmentos"."commitment" USING btree ("status","due_at","workspace_id") WHERE "due_at" IS NOT NULL;--> statement-breakpoint
+ALTER TABLE "commitmentos"."commitment_audit_event" ADD CONSTRAINT "commitment_audit_event_actor_consistency" CHECK (("actor_type" = 'USER' AND "actor_user_id" IS NOT NULL) OR ("actor_type" = 'SYSTEM' AND "actor_user_id" IS NULL));

@@ -1,0 +1,28 @@
+# Dependencies
+/node_modules
+/.pnp
+.pnp.*
+
+# Next.js build output
+/.next/
+/out/
+
+# Test and coverage output
+/coverage/
+/test-results/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Logs and temporary files
+*.log
+npm-debug.log*
+.DS_Store
+
+# TypeScript incremental state
+*.tsbuildinfo
+
+# Local database state
+/postgres-data/

@@ -1,0 +1,4 @@
+ALTER TABLE "commitmentos"."async_job" DROP CONSTRAINT "async_job_error_code_length";--> statement-breakpoint
+ALTER TABLE "commitmentos"."async_job" ADD CONSTRAINT "async_job_idempotency_key_format" CHECK ("idempotency_key" ~ '^[A-Za-z0-9._:-]{1,128}$');--> statement-breakpoint
+ALTER TABLE "commitmentos"."async_job" ADD CONSTRAINT "async_job_correlation_id_format" CHECK ("correlation_id" ~ '^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$');--> statement-breakpoint
+ALTER TABLE "commitmentos"."async_job" ADD CONSTRAINT "async_job_error_code_format" CHECK ("error_code" IS NULL OR (length("error_code") <= 96 AND "error_code" ~ '^[A-Z0-9_]+$'));
