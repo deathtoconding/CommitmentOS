@@ -3,6 +3,7 @@ import { isDeepStrictEqual } from 'node:util';
 import Redis from 'ioredis';
 import { Pool, type QueryResultRow } from 'pg';
 import { randomUUID } from 'node:crypto';
+import { COMMITMENT_OVERDUE_SOURCE_STATUSES } from '../commitments/deadline-evaluation';
 import { getJobsEnvironment, type JobsEnvironment } from './environment';
 import {
   JOB_BACKOFF_TYPE,
@@ -186,6 +187,45 @@ export async function enqueueJob(
     correlationId: row.correlation_id,
     createdAt: (row as StoredJob & { created_at: Date }).created_at,
   };
+}
+
+const MAX_DEADLINE_WORKSPACES_PER_SCHEDULE = 100;
+
+/** Enqueues one idempotent deadline sweep per workspace with a passed deadline. */
+export async function enqueueOverdueDeadlineSweeps(
+  pool: Pool,
+  queue: Queue,
+  environment: JobsEnvironment = getJobsEnvironment(),
+  now = new Date(),
+): Promise<number> {
+  if (Number.isNaN(now.getTime())) throw new Error('A valid scheduling instant is required.');
+  const timeBucket = Math.floor(now.getTime() / environment.deadlineSweepIntervalMs);
+  const workspaces = await pool.query<{ workspace_id: string }>(
+    `SELECT workspace_id
+     FROM commitmentos.commitment
+     WHERE due_at <= $1
+       AND status = ANY($2::commitmentos.commitment_status[])
+     GROUP BY workspace_id
+     ORDER BY workspace_id
+     LIMIT $3`,
+    [now, COMMITMENT_OVERDUE_SOURCE_STATUSES, MAX_DEADLINE_WORKSPACES_PER_SCHEDULE],
+  );
+
+  for (const { workspace_id: workspaceId } of workspaces.rows) {
+    await enqueueJob(
+      pool,
+      queue,
+      {
+        workspaceId,
+        kind: 'COMMITMENT_DEADLINE_SWEEP',
+        idempotencyKey: `deadline-sweep:${timeBucket}`,
+        payload: {},
+      },
+      environment,
+    );
+  }
+
+  return workspaces.rows.length;
 }
 
 export async function dispatchRecoverableJobs(

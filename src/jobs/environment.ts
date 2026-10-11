@@ -33,6 +33,12 @@ const jobsEnvironmentSchema = z.object({
     .max(5 * 60_000)
     .default(30_000),
   JOB_RECOVERY_INTERVAL_MS: z.coerce.number().int().min(1_000).max(60_000).default(5_000),
+  JOB_DEADLINE_SWEEP_INTERVAL_MS: z.coerce
+    .number()
+    .int()
+    .min(5_000)
+    .max(5 * 60_000)
+    .default(60_000),
 });
 
 export type JobsEnvironment = {
@@ -46,6 +52,7 @@ export type JobsEnvironment = {
   heartbeatIntervalMs: number;
   heartbeatStaleMs: number;
   recoveryIntervalMs: number;
+  deadlineSweepIntervalMs: number;
 };
 
 export function getJobsEnvironment(
@@ -71,5 +78,6 @@ export function getJobsEnvironment(
     heartbeatIntervalMs: result.data.JOB_HEARTBEAT_INTERVAL_MS,
     heartbeatStaleMs: result.data.JOB_HEARTBEAT_STALE_MS,
     recoveryIntervalMs: result.data.JOB_RECOVERY_INTERVAL_MS,
+    deadlineSweepIntervalMs: result.data.JOB_DEADLINE_SWEEP_INTERVAL_MS,
   };
 }

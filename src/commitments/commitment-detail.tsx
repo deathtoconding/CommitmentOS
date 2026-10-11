@@ -1,11 +1,12 @@
-import type { CommitmentAuditEventType } from './audit-model';
+import type { CommitmentAuditActorType, CommitmentAuditEventType } from './audit-model';
 import type { Commitment, CommitmentStatus } from './model';
 import { COMMITMENT_STATUSES } from './model';
 import { commitmentStatusLabel, formatCommitmentDeadline } from './presentation';
 
 type CommitmentAuditTimelineEvent = {
   id: string;
-  actorUserId: string;
+  actorUserId: string | null;
+  actorType: CommitmentAuditActorType;
   eventType: CommitmentAuditEventType;
   details: Record<string, unknown>;
   occurredAt: Date;
@@ -90,7 +91,11 @@ function CommitmentAuditTimeline({
                 <div className="commitment-audit-event-copy">
                   <h3>{copy.title}</h3>
                   {copy.detail ? <p>{copy.detail}</p> : null}
-                  <span>Recorded by a workspace member</span>
+                  <span>
+                    {event.actorType === 'SYSTEM'
+                      ? 'Automatically updated by CommitmentOS'
+                      : 'Recorded by a workspace member'}
+                  </span>
                 </div>
                 <time dateTime={event.occurredAt.toISOString()}>
                   {formatCommitmentDeadline(event.occurredAt, null)}

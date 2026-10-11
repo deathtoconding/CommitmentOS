@@ -13,6 +13,7 @@ import { PermanentJobError, RateLimitedJobError, RetryableJobError } from '../sr
 import type { JobProcessorMap } from '../src/jobs/worker-core';
 import { getJobReadiness } from '../src/jobs/readiness';
 import { startJobWorker } from '../src/jobs/worker-core';
+import { evaluateWorkspaceCommitmentDeadlines } from '../src/commitments/deadline-evaluation';
 
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) throw new Error('Set DATABASE_URL before running the jobs integration checks.');
@@ -26,12 +27,35 @@ const environment: JobsEnvironment = {
   heartbeatIntervalMs: 1_000,
   heartbeatStaleMs: 5_000,
   recoveryIntervalMs: 1_000,
+  deadlineSweepIntervalMs: 60_000,
 };
 const pool = new Pool({
   connectionString: databaseUrl,
   application_name: 'commitmentos-jobs-integration-test',
 });
 const workspaceId = randomUUID();
+const secondWorkspaceId = randomUUID();
+const isolationWorkspaceId = randomUUID();
+const deadlineCreatorUserId = randomUUID();
+const workspaceIds = [workspaceId, secondWorkspaceId, isolationWorkspaceId];
+const pastDeadline = new Date(Date.now() - 60_000);
+const futureDeadline = new Date(Date.now() + 24 * 60 * 60 * 1_000);
+const deadlineFixtures = [
+  { id: randomUUID(), workspaceId, status: 'OPEN', dueAt: pastDeadline, shouldOverdue: true },
+  { id: randomUUID(), workspaceId, status: 'DUE_SOON', dueAt: pastDeadline, shouldOverdue: true },
+  { id: randomUUID(), workspaceId, status: 'WAITING', dueAt: pastDeadline, shouldOverdue: true },
+  { id: randomUUID(), workspaceId, status: 'BLOCKED', dueAt: pastDeadline, shouldOverdue: true },
+  { id: randomUUID(), workspaceId, status: 'DETECTED', dueAt: pastDeadline, shouldOverdue: false },
+  { id: randomUUID(), workspaceId, status: 'OPEN', dueAt: futureDeadline, shouldOverdue: false },
+  { id: randomUUID(), workspaceId, status: 'OPEN', dueAt: null, shouldOverdue: false },
+  {
+    id: randomUUID(),
+    workspaceId: secondWorkspaceId,
+    status: 'OPEN',
+    dueAt: pastDeadline,
+    shouldOverdue: true,
+  },
+];
 const workerId = `integration-${randomUUID()}`;
 const transientProbeId = randomUUID();
 const permanentProbeId = randomUUID();
@@ -61,6 +85,34 @@ async function waitForJob(jobId: string, expectedStatus: 'SUCCEEDED' | 'DEAD_LET
     await delay(50);
   }
   throw new Error(`Timed out waiting for job ${jobId} to reach ${expectedStatus}.`);
+}
+
+async function waitForDeadlineSweepJob(targetWorkspaceId: string): Promise<string> {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    const result = await pool.query<{ id: string }>(
+      `SELECT id FROM commitmentos.async_job
+       WHERE workspace_id = $1 AND kind = 'COMMITMENT_DEADLINE_SWEEP'
+       ORDER BY created_at DESC LIMIT 1`,
+      [targetWorkspaceId],
+    );
+    if (result.rows[0]) return result.rows[0].id;
+    await delay(25);
+  }
+  throw new Error('The deadline scheduler did not create a durable workspace sweep job.');
+}
+
+async function waitForCommitmentStatus(commitmentId: string, expectedStatus: string) {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    const result = await pool.query<{ status: string }>(
+      'SELECT status FROM commitmentos.commitment WHERE id = $1',
+      [commitmentId],
+    );
+    if (result.rows[0]?.status === expectedStatus) return;
+    await delay(25);
+  }
+  throw new Error(`Commitment did not reach expected status ${expectedStatus}.`);
 }
 
 async function waitForRetrySchedule(jobId: string) {
@@ -162,11 +214,39 @@ function startIntegrationWorker(id: string) {
   return startJobWorker({ pool, workerId: id, environment, processors });
 }
 
+function isCheckConstraintViolation(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && error.code === '23514';
+}
+
 try {
-  await pool.query('INSERT INTO commitmentos.workspace (id, name) VALUES ($1, $2)', [
-    workspaceId,
-    'Jobs integration fixture',
-  ]);
+  for (const [id, name] of [
+    [workspaceId, 'Jobs integration fixture'],
+    [secondWorkspaceId, 'Deadline tenant fixture'],
+    [isolationWorkspaceId, 'Deadline isolation fixture'],
+  ]) {
+    await pool.query('INSERT INTO commitmentos.workspace (id, name) VALUES ($1, $2)', [id, name]);
+  }
+  await pool.query(
+    `INSERT INTO commitmentos.user (id, name, email, email_verified)
+     VALUES ($1, 'Deadline integration actor', $2, true)`,
+    [deadlineCreatorUserId, `deadline-${deadlineCreatorUserId}@integration.test`],
+  );
+  for (const fixture of deadlineFixtures) {
+    await pool.query(
+      `INSERT INTO commitmentos.commitment (
+         id, workspace_id, commitment_text, normalized_action, status, due_at, created_by
+       ) VALUES ($1, $2, $3, $4, $5::commitmentos.commitment_status, $6, $7)`,
+      [
+        fixture.id,
+        fixture.workspaceId,
+        `Synthetic deadline integration commitment ${fixture.id}`,
+        `Deadline integration ${fixture.status}`,
+        fixture.status,
+        fixture.dueAt,
+        deadlineCreatorUserId,
+      ],
+    );
+  }
 
   console.info = (...data) => {
     workerLogs.push(data.map((value) => String(value)).join(' '));
@@ -178,6 +258,211 @@ try {
     ready: true,
     dependencies: { postgres: 'ready', redis: 'ready', worker: 'ready' },
   });
+
+  for (const targetWorkspaceId of [workspaceId, secondWorkspaceId]) {
+    const deadlineJobId = await waitForDeadlineSweepJob(targetWorkspaceId);
+    createdJobIds.add(deadlineJobId);
+    const deadlineJob = await waitForJob(deadlineJobId, 'SUCCEEDED');
+    assert.equal(deadlineJob.attempt_count, 1);
+  }
+  for (const fixture of deadlineFixtures) {
+    await waitForCommitmentStatus(fixture.id, fixture.shouldOverdue ? 'OVERDUE' : fixture.status);
+  }
+  const eligibleDeadlineIds = deadlineFixtures
+    .filter((fixture) => fixture.shouldOverdue)
+    .map((fixture) => fixture.id);
+  const deadlineAuditEvents = await pool.query<{
+    workspace_id: string;
+    commitment_id: string;
+    actor_user_id: string | null;
+    actor_type: string;
+    event_type: string;
+    details: Record<string, unknown>;
+  }>(
+    `SELECT workspace_id, commitment_id, actor_user_id, actor_type, event_type, details
+     FROM commitmentos.commitment_audit_event
+     WHERE commitment_id = ANY($1::text[])`,
+    [eligibleDeadlineIds],
+  );
+  assert.equal(deadlineAuditEvents.rows.length, eligibleDeadlineIds.length);
+  const eligibleAuditFixture = deadlineFixtures.find((fixture) => fixture.shouldOverdue);
+  assert.ok(eligibleAuditFixture);
+  await assert.rejects(
+    pool.query(
+      `INSERT INTO commitmentos.commitment_audit_event (
+         id, workspace_id, commitment_id, actor_user_id, actor_type, event_type, details
+       ) VALUES ($1, $2, $3, $4, 'SYSTEM', 'STATUS_CHANGED', '{}'::jsonb)`,
+      [
+        randomUUID(),
+        eligibleAuditFixture.workspaceId,
+        eligibleAuditFixture.id,
+        deadlineCreatorUserId,
+      ],
+    ),
+    isCheckConstraintViolation,
+    'SYSTEM audit events must not accept a user ID.',
+  );
+  await assert.rejects(
+    pool.query(
+      `INSERT INTO commitmentos.commitment_audit_event (
+         id, workspace_id, commitment_id, actor_user_id, actor_type, event_type, details
+       ) VALUES ($1, $2, $3, NULL, 'USER', 'STATUS_CHANGED', '{}'::jsonb)`,
+      [randomUUID(), eligibleAuditFixture.workspaceId, eligibleAuditFixture.id],
+    ),
+    isCheckConstraintViolation,
+    'USER audit events must include a user ID.',
+  );
+  for (const event of deadlineAuditEvents.rows) {
+    const fixture = deadlineFixtures.find((candidate) => candidate.id === event.commitment_id);
+    assert.ok(fixture);
+    assert.equal(event.workspace_id, fixture.workspaceId);
+    assert.equal(event.actor_user_id, null);
+    assert.equal(event.actor_type, 'SYSTEM');
+    assert.equal(event.event_type, 'STATUS_CHANGED');
+    assert.deepEqual(event.details, {
+      fromStatus: fixture.status,
+      toStatus: 'OVERDUE',
+      reason: 'deadline-passed',
+    });
+  }
+  const excludedDeadlineAudit = await pool.query<{ count: string }>(
+    'SELECT count(*) FROM commitmentos.commitment_audit_event WHERE commitment_id = ANY($1::text[])',
+    [deadlineFixtures.filter((fixture) => !fixture.shouldOverdue).map((fixture) => fixture.id)],
+  );
+  assert.equal(excludedDeadlineAudit.rows[0]?.count, '0');
+
+  const batchDeadlineIds = [randomUUID(), randomUUID()];
+  for (const id of batchDeadlineIds) {
+    await pool.query(
+      `INSERT INTO commitmentos.commitment (
+         id, workspace_id, commitment_text, normalized_action, status, due_at, created_by
+       ) VALUES ($1, $2, $3, $4, 'OPEN', $5, $6)`,
+      [
+        id,
+        isolationWorkspaceId,
+        `Synthetic batch deadline fixture ${id}`,
+        'Batch deadline',
+        pastDeadline,
+        deadlineCreatorUserId,
+      ],
+    );
+  }
+  const wrongWorkspaceEvaluation = await evaluateWorkspaceCommitmentDeadlines(
+    pool,
+    workspaceId,
+    new Date(),
+  );
+  assert.deepEqual(wrongWorkspaceEvaluation, { updatedCount: 0, mayHaveMore: false });
+  const untouchedTenant = await pool.query<{ status: string }>(
+    'SELECT status FROM commitmentos.commitment WHERE id = ANY($1::text[])',
+    [batchDeadlineIds],
+  );
+  assert.deepEqual(
+    untouchedTenant.rows.map((row) => row.status),
+    ['OPEN', 'OPEN'],
+  );
+  const firstDeadlineBatch = await evaluateWorkspaceCommitmentDeadlines(
+    pool,
+    isolationWorkspaceId,
+    new Date(),
+    1,
+  );
+  const secondDeadlineBatch = await evaluateWorkspaceCommitmentDeadlines(
+    pool,
+    isolationWorkspaceId,
+    new Date(),
+    1,
+  );
+  assert.deepEqual(firstDeadlineBatch, { updatedCount: 1, mayHaveMore: true });
+  assert.deepEqual(secondDeadlineBatch, { updatedCount: 1, mayHaveMore: true });
+  const exhaustedDeadlineBatch = await evaluateWorkspaceCommitmentDeadlines(
+    pool,
+    isolationWorkspaceId,
+    new Date(),
+    1,
+  );
+  assert.deepEqual(exhaustedDeadlineBatch, { updatedCount: 0, mayHaveMore: false });
+  await Promise.all(batchDeadlineIds.map((id) => waitForCommitmentStatus(id, 'OVERDUE')));
+  const batchDeadlineAudits = await pool.query<{
+    commitment_id: string;
+    workspace_id: string;
+    actor_user_id: string | null;
+    actor_type: string;
+    details: Record<string, unknown>;
+  }>(
+    `SELECT commitment_id, workspace_id, actor_user_id, actor_type, details
+     FROM commitmentos.commitment_audit_event
+     WHERE commitment_id = ANY($1::text[])`,
+    [batchDeadlineIds],
+  );
+  assert.equal(batchDeadlineAudits.rows.length, batchDeadlineIds.length);
+  for (const event of batchDeadlineAudits.rows) {
+    assert.equal(event.workspace_id, isolationWorkspaceId);
+    assert.equal(event.actor_user_id, null);
+    assert.equal(event.actor_type, 'SYSTEM');
+    assert.deepEqual(event.details, {
+      fromStatus: 'OPEN',
+      toStatus: 'OVERDUE',
+      reason: 'deadline-passed',
+    });
+  }
+
+  const atomicDeadlineId = randomUUID();
+  await pool.query(
+    `INSERT INTO commitmentos.commitment (
+       id, workspace_id, commitment_text, normalized_action, status, due_at, created_by
+     ) VALUES ($1, $2, $3, $4, 'OPEN', $5, $6)`,
+    [
+      atomicDeadlineId,
+      isolationWorkspaceId,
+      `Synthetic atomic deadline fixture ${atomicDeadlineId}`,
+      'Atomic deadline',
+      pastDeadline,
+      deadlineCreatorUserId,
+    ],
+  );
+  try {
+    await pool.query(
+      `CREATE OR REPLACE FUNCTION commitmentos.reject_deadline_audit_test()
+       RETURNS trigger LANGUAGE plpgsql AS $$
+       BEGIN
+         IF NEW.actor_type = 'SYSTEM' THEN
+           RAISE EXCEPTION 'synthetic deadline audit insertion failure';
+         END IF;
+         RETURN NEW;
+       END;
+       $$`,
+    );
+    await pool.query(
+      `CREATE TRIGGER reject_deadline_audit_test
+       BEFORE INSERT ON commitmentos.commitment_audit_event
+       FOR EACH ROW EXECUTE FUNCTION commitmentos.reject_deadline_audit_test()`,
+    );
+    await assert.rejects(
+      evaluateWorkspaceCommitmentDeadlines(pool, isolationWorkspaceId, new Date()),
+      /synthetic deadline audit insertion failure/,
+      'A deadline status mutation must fail if its immutable audit record cannot be written.',
+    );
+  } finally {
+    await pool.query(
+      'DROP TRIGGER IF EXISTS reject_deadline_audit_test ON commitmentos.commitment_audit_event',
+    );
+    await pool.query('DROP FUNCTION IF EXISTS commitmentos.reject_deadline_audit_test()');
+  }
+  const rolledBackDeadline = await pool.query<{ status: string }>(
+    'SELECT status FROM commitmentos.commitment WHERE id = $1',
+    [atomicDeadlineId],
+  );
+  assert.equal(rolledBackDeadline.rows[0]?.status, 'OPEN');
+  const rolledBackAudit = await pool.query<{ count: string }>(
+    'SELECT count(*) FROM commitmentos.commitment_audit_event WHERE commitment_id = $1',
+    [atomicDeadlineId],
+  );
+  assert.equal(rolledBackAudit.rows[0]?.count, '0');
+  await pool.query('UPDATE commitmentos.commitment SET due_at = $2 WHERE id = $1', [
+    atomicDeadlineId,
+    futureDeadline,
+  ]);
 
   const idempotencyKey = `integration:${randomUUID()}`;
   const request = probeInput(idempotencyKey, randomUUID());
@@ -324,6 +609,11 @@ try {
     false,
     'Structured worker logs must not contain job payloads.',
   );
+  assert.equal(
+    workerLogs.join('\n').includes('Synthetic deadline integration commitment'),
+    false,
+    'Deadline worker logs must not contain commitment text.',
+  );
 
   const failedTransportJobId = randomUUID();
   const failedTransportCorrelationId = randomUUID();
@@ -428,7 +718,7 @@ try {
   assert.equal(probeAttempts.get(restartProbeId), 1);
 
   console.log(
-    'PostgreSQL and Redis/BullMQ job integration checks passed: idempotency, duplicate delivery, jittered retries, retry exhaustion, timeout cancellation, permanent dead-letter, worker restart/outbox recovery, redacted logs, and readiness.',
+    'PostgreSQL and Redis/BullMQ job integration checks passed: idempotency, duplicate delivery, retry/timeout/dead-letter recovery, automated deadline sweeps with tenant scope and atomic SYSTEM audits, worker restart, redacted logs, and readiness.',
   );
 } catch (error) {
   const code =
@@ -475,17 +765,44 @@ try {
     }
     await worker.close().catch(() => undefined);
   }
-  await pool
-    .query('DELETE FROM commitmentos.async_job WHERE workspace_id = $1', [workspaceId])
-    .catch(() => undefined);
-  await pool
-    .query(
-      'DELETE FROM commitmentos.background_worker_heartbeat WHERE worker_id = ANY($1::text[])',
-      [[...workerIds]],
-    )
-    .catch(() => undefined);
-  await pool
-    .query('DELETE FROM commitmentos.workspace WHERE id = $1', [workspaceId])
-    .catch(() => undefined);
+  const cleanupClient = await pool.connect().catch(() => undefined);
+  if (cleanupClient) {
+    try {
+      await cleanupClient.query('BEGIN');
+      await cleanupClient.query(
+        'DELETE FROM commitmentos.async_job WHERE workspace_id = ANY($1::text[])',
+        [workspaceIds],
+      );
+      await cleanupClient.query(
+        'DELETE FROM commitmentos.background_worker_heartbeat WHERE worker_id = ANY($1::text[])',
+        [[...workerIds]],
+      );
+      await cleanupClient.query(
+        'ALTER TABLE commitmentos.commitment_audit_event DISABLE TRIGGER USER',
+      );
+      await cleanupClient.query(
+        'DELETE FROM commitmentos.commitment_audit_event WHERE workspace_id = ANY($1::text[])',
+        [workspaceIds],
+      );
+      await cleanupClient.query(
+        'ALTER TABLE commitmentos.commitment_audit_event ENABLE TRIGGER USER',
+      );
+      await cleanupClient.query(
+        'DELETE FROM commitmentos.commitment WHERE workspace_id = ANY($1::text[])',
+        [workspaceIds],
+      );
+      await cleanupClient.query('DELETE FROM commitmentos.user WHERE id = $1', [
+        deadlineCreatorUserId,
+      ]);
+      await cleanupClient.query('DELETE FROM commitmentos.workspace WHERE id = ANY($1::text[])', [
+        workspaceIds,
+      ]);
+      await cleanupClient.query('COMMIT');
+    } catch {
+      await cleanupClient.query('ROLLBACK').catch(() => undefined);
+    } finally {
+      cleanupClient.release();
+    }
+  }
   await pool.end();
 }

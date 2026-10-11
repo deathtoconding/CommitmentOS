@@ -1,5 +1,8 @@
 import { sql } from 'drizzle-orm';
-import { COMMITMENT_AUDIT_EVENT_TYPES } from '../../commitments/audit-model';
+import {
+  COMMITMENT_AUDIT_ACTOR_TYPES,
+  COMMITMENT_AUDIT_EVENT_TYPES,
+} from '../../commitments/audit-model';
 import { COMMITMENT_STATUSES } from '../../commitments/model';
 import { JOB_STATUSES } from '../../jobs/model';
 import {
@@ -434,6 +437,9 @@ export const commitment = commitmentosSchema.table(
       table.status,
       table.dueAt,
     ),
+    index('commitment_deadline_scheduler_idx')
+      .on(table.status, table.dueAt, table.workspaceId)
+      .where(sql`"due_at" IS NOT NULL`),
     index('commitment_workspace_created_at_id_idx').on(
       table.workspaceId,
       table.createdAt,
@@ -446,6 +452,11 @@ export const commitment = commitmentosSchema.table(
       table.sourceMessageRecordId,
     ),
   ],
+);
+
+export const commitmentAuditActorType = commitmentosSchema.enum(
+  'commitment_audit_actor_type',
+  COMMITMENT_AUDIT_ACTOR_TYPES,
 );
 
 export const commitmentAuditEventType = commitmentosSchema.enum(
@@ -461,9 +472,8 @@ export const commitmentAuditEvent = commitmentosSchema.table(
       .notNull()
       .references(() => workspace.id, { onDelete: 'restrict' }),
     commitmentId: text('commitment_id').notNull(),
-    actorUserId: text('actor_user_id')
-      .notNull()
-      .references(() => user.id, { onDelete: 'restrict' }),
+    actorUserId: text('actor_user_id').references(() => user.id, { onDelete: 'restrict' }),
+    actorType: commitmentAuditActorType('actor_type').default('USER').notNull(),
     eventType: commitmentAuditEventType('event_type').notNull(),
     details: jsonb('details').$type<Record<string, unknown>>().default({}).notNull(),
     occurredAt: timestamp('occurred_at', { withTimezone: true, mode: 'date' })
@@ -477,6 +487,10 @@ export const commitmentAuditEvent = commitmentosSchema.table(
       foreignColumns: [commitment.workspaceId, commitment.id],
     }).onDelete('restrict'),
     check('commitment_audit_event_details_object', sql`jsonb_typeof("details") = 'object'`),
+    check(
+      'commitment_audit_event_actor_consistency',
+      sql`("actor_type" = 'USER' AND "actor_user_id" IS NOT NULL) OR ("actor_type" = 'SYSTEM' AND "actor_user_id" IS NULL)`,
+    ),
     index('commitment_audit_event_workspace_commitment_occurred_idx').on(
       table.workspaceId,
       table.commitmentId,

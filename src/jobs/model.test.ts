@@ -28,6 +28,17 @@ describe('background job contracts', () => {
     });
   });
 
+  it('accepts empty deadline-sweep payloads while keeping job contracts strict', () => {
+    const sweep = {
+      workspaceId,
+      kind: 'COMMITMENT_DEADLINE_SWEEP',
+      idempotencyKey: 'deadline-sweep:30000',
+      payload: {},
+    };
+    expect(parseJobRequest(sweep)).toEqual(sweep);
+    expect(() => parseJobRequest({ ...sweep, payload: { notifyOwner: true } })).toThrow();
+  });
+
   it('rejects unknown fields, unsafe idempotency keys, and malformed payloads', () => {
     expect(() => parseJobRequest({ ...validJob, payload: { probeId, token: 'secret' } })).toThrow();
     expect(() => parseJobRequest({ ...validJob, idempotencyKey: 'email@customer.test' })).toThrow();

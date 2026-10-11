@@ -18,6 +18,7 @@ describe('getJobsEnvironment', () => {
       heartbeatIntervalMs: 10_000,
       heartbeatStaleMs: 30_000,
       recoveryIntervalMs: 5_000,
+      deadlineSweepIntervalMs: 60_000,
     });
     expect(getJobsEnvironment({ REDIS_URL: 'rediss://cache.example.test:6380' }).redisUrl).toBe(
       'rediss://cache.example.test:6380',
@@ -29,6 +30,8 @@ describe('getJobsEnvironment', () => {
     { REDIS_URL: 'redis://localhost:6379', JOB_WORKER_CONCURRENCY: '0' },
     { REDIS_URL: 'redis://localhost:6379', JOB_MAX_ATTEMPTS: '11' },
     { REDIS_URL: 'redis://localhost:6379', JOBS_QUEUE_NAME: 'invalid:queue' },
+    { REDIS_URL: 'redis://localhost:6379', JOB_DEADLINE_SWEEP_INTERVAL_MS: '4999' },
+    { REDIS_URL: 'redis://localhost:6379', JOB_DEADLINE_SWEEP_INTERVAL_MS: '300001' },
     {
       REDIS_URL: 'redis://localhost:6379',
       JOB_HEARTBEAT_INTERVAL_MS: '20000',

@@ -1,5 +1,8 @@
 import type { Commitment } from './model';
 
+export const COMMITMENT_AUDIT_ACTOR_TYPES = ['USER', 'SYSTEM'] as const;
+export type CommitmentAuditActorType = (typeof COMMITMENT_AUDIT_ACTOR_TYPES)[number];
+
 export const COMMITMENT_AUDIT_EVENT_TYPES = [
   'CREATED',
   'EDITED',

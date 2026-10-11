@@ -8,7 +8,13 @@ import {
   PermanentJobError,
   type JobKind,
 } from './model';
-import { createJobQueueClient, dispatchRecoverableJobs, type StoredJob } from './queue';
+import {
+  createJobQueueClient,
+  dispatchRecoverableJobs,
+  enqueueOverdueDeadlineSweeps,
+  type StoredJob,
+} from './queue';
+import { evaluateWorkspaceCommitmentDeadlines } from '../commitments/deadline-evaluation';
 import { getJobsEnvironment, type JobsEnvironment } from './environment';
 
 export type JobProcessorContext = {
@@ -34,6 +40,20 @@ const platformProbe: JobProcessor = async ({ workspaceId, signal, pool }) => {
   if (result.rowCount !== 1) {
     throw new PermanentJobError('The workspace no longer exists.', 'WORKSPACE_NOT_FOUND');
   }
+};
+
+const commitmentDeadlineSweep: JobProcessor = async ({ workspaceId, signal, pool }) => {
+  let result;
+  do {
+    if (signal.aborted) throw signal.reason;
+    result = await evaluateWorkspaceCommitmentDeadlines(
+      pool,
+      workspaceId,
+      new Date(),
+      undefined,
+      signal,
+    );
+  } while (result.mayHaveMore && result.updatedCount > 0);
 };
 
 function logWorkerEvent(
@@ -248,7 +268,11 @@ export async function startJobWorker(options: {
   processors?: JobProcessorMap;
 }) {
   const environment = options.environment ?? getJobsEnvironment();
-  const processors: JobProcessorMap = { PLATFORM_PROBE: platformProbe, ...options.processors };
+  const processors: JobProcessorMap = {
+    PLATFORM_PROBE: platformProbe,
+    COMMITMENT_DEADLINE_SWEEP: commitmentDeadlineSweep,
+    ...options.processors,
+  };
   const queueClient = createJobQueueClient(environment);
   const worker = new Worker<QueueJobData, { jobId: string; status: string }>(
     environment.queueName,
@@ -353,6 +377,33 @@ export async function startJobWorker(options: {
   };
   await recover();
   const recoveryTimer = setInterval(() => void recover(), environment.recoveryIntervalMs);
+  let deadlineScheduleInProgress = false;
+  const scheduleDeadlineSweeps = async () => {
+    if (deadlineScheduleInProgress) return;
+    deadlineScheduleInProgress = true;
+    try {
+      const workspaceCount = await enqueueOverdueDeadlineSweeps(
+        options.pool,
+        queueClient.queue,
+        environment,
+      );
+      if (workspaceCount > 0) {
+        logWorkerEvent('overdue_deadline_sweeps_enqueued', { workspaceCount });
+      }
+    } catch (error) {
+      logWorkerEvent('deadline_sweep_scheduling_failed', {
+        errorCode: classifyJobFailure(error).errorCode,
+      });
+    } finally {
+      deadlineScheduleInProgress = false;
+    }
+  };
+  await scheduleDeadlineSweeps();
+  const deadlineSweepTimer = setInterval(
+    () => void scheduleDeadlineSweeps(),
+    environment.deadlineSweepIntervalMs,
+  );
+  deadlineSweepTimer.unref();
   recoveryTimer.unref();
   const heartbeatTimer = setInterval(() => {
     void recordHeartbeat(options.pool, options.workerId, environment.queueName, 'READY').catch(
@@ -378,6 +429,7 @@ export async function startJobWorker(options: {
     connection: queueClient.connection,
     async close() {
       clearInterval(recoveryTimer);
+      clearInterval(deadlineSweepTimer);
       clearInterval(heartbeatTimer);
       await recordHeartbeat(
         options.pool,

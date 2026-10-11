@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const JOB_KINDS = ['PLATFORM_PROBE'] as const;
+export const JOB_KINDS = ['PLATFORM_PROBE', 'COMMITMENT_DEADLINE_SWEEP'] as const;
 export type JobKind = (typeof JOB_KINDS)[number];
 
 export const JOB_STATUSES = [
@@ -29,6 +29,7 @@ export type JobFailureClass = (typeof JOB_FAILURE_CLASSES)[number];
 
 const jobPayloadSchemas = {
   PLATFORM_PROBE: z.object({ probeId: z.string().uuid() }).strict(),
+  COMMITMENT_DEADLINE_SWEEP: z.object({}).strict(),
 } satisfies Record<JobKind, z.ZodType>;
 
 const jobRequestSchema = z

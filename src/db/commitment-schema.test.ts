@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { COMMITMENT_AUDIT_EVENT_TYPES } from '../commitments/audit-model';
+import {
+  COMMITMENT_AUDIT_ACTOR_TYPES,
+  COMMITMENT_AUDIT_EVENT_TYPES,
+} from '../commitments/audit-model';
 import { getTableConfig } from 'drizzle-orm/pg-core';
 import {
   commitment,
+  commitmentAuditActorType,
   commitmentAuditEvent,
   commitmentAuditEventType,
   commitmentStatus,
@@ -70,6 +74,7 @@ describe('commitment PostgreSQL schema', () => {
     ]);
     expect(tableConfig.indexes.map((index) => index.config.name)).toEqual([
       'commitment_workspace_status_due_at_idx',
+      'commitment_deadline_scheduler_idx',
       'commitment_workspace_created_at_id_idx',
       'commitment_workspace_owner_user_id_idx',
       'commitment_workspace_source_message_idx',
@@ -82,25 +87,29 @@ describe('commitment PostgreSQL schema', () => {
 });
 
 describe('commitment audit event PostgreSQL schema', () => {
-  it('defines the required current and forward-compatible event types', () => {
+  it('defines explicit user/system actor types and the required event types', () => {
+    expect(commitmentAuditActorType.enumValues).toEqual(COMMITMENT_AUDIT_ACTOR_TYPES);
     expect(commitmentAuditEventType.enumValues).toEqual(COMMITMENT_AUDIT_EVENT_TYPES);
   });
 
-  it('requires actor, tenant scope, commitment, event type, details, and occurrence time', () => {
+  it('requires tenant scope, an explicit actor type, event details, and occurrence time', () => {
     for (const name of [
       'id',
       'workspace_id',
       'commitment_id',
-      'actor_user_id',
+      'actor_type',
       'event_type',
       'details',
       'occurred_at',
     ]) {
       expect(auditColumns.get(name)?.notNull, `${name} should be required`).toBe(true);
     }
+    expect(auditColumns.get('actor_user_id')?.notNull).toBe(false);
+    expect(auditColumns.get('actor_type')?.hasDefault).toBe(true);
     expect(auditConfig.foreignKeys).toHaveLength(3);
     expect(auditConfig.checks.map((constraint) => constraint.name)).toEqual([
       'commitment_audit_event_details_object',
+      'commitment_audit_event_actor_consistency',
     ]);
   });
 
